@@ -119,6 +119,17 @@ _syscall0(pid_t,gettid)
 #include <sys/syscall.h>
 #endif
 
+#ifdef HAVE_SYS_CPUSET_H
+#include <sys/param.h>         /* pulls sys/cdefs.h and sys/types.h for sys/cpuset.h */
+#include <sys/cpuset.h>        /* CPU_ZERO(), CPU_SET, cpuset_t */
+#endif
+#ifdef HAVE_PTHREAD_NP_H
+#include <pthread_np.h>        /* pthread_*_np */
+#endif
+#ifdef HAVE_CPUSET_T
+typedef cpuset_t cpu_set_t;
+#endif
+
 #ifdef HAVE_SEMA_INIT			/* Solaris */
 #include <synch.h>
 
@@ -5023,6 +5034,47 @@ enumerate:
   }
 }
 
+static
+PRED_IMPL("message_queue_set", 2, message_queue_set, 0)
+{ PRED_LD
+  message_queue *q;
+  atom_t name;
+  size_t arity;
+  int rc;
+
+  if ( !get_message_queue__LD(A1, &q PASS_LD) )
+    return FALSE;
+
+  if ( PL_get_name_arity(A2, &name, &arity) && arity == 1 )
+  { term_t a = PL_new_term_ref();
+
+    _PL_get_arg(1, A2, a);
+    if ( name == ATOM_max_size )
+    { size_t mx;
+
+      if ( (rc=PL_get_size_ex(a, &mx)) )
+      { size_t omax = q->max_size;
+
+	q->max_size = mx;
+
+	if ( mx > omax && q->wait_for_drain )
+	{ DEBUG(MSG_QUEUE, Sdprintf("Queue drained. wakeup writers\n"));
+	  cv_signal(&q->drain_var);
+	}
+
+	rc = TRUE;
+      }
+    } else
+    { rc = PL_domain_error("message_queue_property", A2);
+    }
+  } else
+    rc = PL_type_error("compound", A2);
+
+  release_message_queue(q);
+
+  return rc;
+}
+
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 thread_get_message(+Queue, -Message)
@@ -6388,7 +6440,7 @@ localiseDefinition(Definition def)
   ATOMIC_ADD(&local->module->code_size, sizeof(*local));
   DEBUG(MSG_PROC_COUNT, Sdprintf("Localise %s\n", predicateName(def)));
 
-  createSupervisor(local);
+  setSupervisor(local);
   registerLocalDefinition(def);
 
   return local;
@@ -6888,13 +6940,11 @@ pushPredicateAccess__LD(Definition def ARG_LD)
   enterDefinition(def);			/* probably not needed in the end */
   dref = &refs->blocks[idx][top];
   dref->predicate  = def;
+  dref->generation = global_generation();
+  refs->top = top;
   do
   { dref->generation = global_generation();
-    if ( unlikely(GD->clauses.cgc_active) )
-      cgcActivatePredicate__LD(def, dref->generation PASS_LD);
   } while ( dref->generation != global_generation() );
-
-  refs->top = top;
 
   return dref->generation;
 }
@@ -7029,6 +7079,8 @@ BeginPredDefs(thread)
   PRED_DEF("message_queue_create",   1,	message_queue_create,  0)
   PRED_DEF("message_queue_create",   2,	message_queue_create2, PL_FA_ISO)
   PRED_DEF("message_queue_property", 2,	message_property,      NDET|PL_FA_ISO)
+  PRED_DEF("message_queue_set",      2, message_queue_set,     0)
+
   PRED_DEF("thread_send_message",    2,	thread_send_message,   PL_FA_ISO)
   PRED_DEF("thread_send_message",    3,	thread_send_message,   0)
   PRED_DEF("thread_get_message",     1,	thread_get_message,    PL_FA_ISO)

@@ -3051,29 +3051,43 @@ term_variables(term_t t, term_t vars, term_t tail, int flags ARG_LD)
  * Get a v/n term for the variables in Term
  */
 
-int
+#define VAR_SKEL_FAST 8
+
+ssize_t
 term_var_skeleton(term_t t, term_t vs ARG_LD)
 { term_t v0;
   size_t count;
   functor_t vf;
+  static functor_t fast[VAR_SKEL_FAST] = {0};
 
   for(;;)
   { count = term_variables_to_termv(t, &v0, ~(size_t)0, 0 PASS_LD);
     if ( count == TV_EXCEPTION )
-      return FALSE;
+      return -1;
     if ( count == TV_NOSPACE )
     { PL_reset_term_refs(v0);
       if ( !makeMoreStackSpace(LOCAL_OVERFLOW, ALLOW_SHIFT) )
-	return FALSE;			/* GC doesn't help */
+	return -1;			/* GC doesn't help */
       continue;
     }
     if ( count == TV_NOMEM )
-      return PL_error(NULL, 0, NULL, ERR_NOMEM);
+    { PL_error(NULL, 0, NULL, ERR_NOMEM);
+      return -1;
+    }
     break;
   }
 
-  vf = PL_new_functor(ATOM_v, count);
-  return PL_cons_functor_v(vs, vf, v0);
+  if ( count < VAR_SKEL_FAST )
+  { if ( !(vf=fast[count]) )
+      fast[count] = vf = PL_new_functor(ATOM_ret, count);
+  } else
+  { vf = PL_new_functor(ATOM_ret, count);
+  }
+
+  if ( !PL_cons_functor_v(vs, vf, v0) )
+    return -1;
+
+  return count;
 }
 
 
@@ -3747,12 +3761,6 @@ PRED_IMPL("number_string", 2, number_string, 0)
 }
 
 
-#if SIZEOF_WCHAR_T == 2
-#define CHARCODE_MAX 0xffff
-#else
-#define CHARCODE_MAX 0x10ffff
-#endif
-
 static
 PRED_IMPL("char_code", 2, char_code, PL_FA_ISO)
 { PRED_LD
@@ -3783,7 +3791,7 @@ PRED_IMPL("char_code", 2, char_code, PL_FA_ISO)
   { if ( !PL_get_integer_ex(chr, &n) )
       fail;
 
-    if ( n >= 0 && n <= CHARCODE_MAX )
+    if ( n >= 0 && n <= PLMAXWCHAR )
       cchr = n;
     else if ( n < 0 || n > 0x10ffff )
       return PL_type_error("character_code", chr);
@@ -3810,7 +3818,7 @@ is_code(word w)
 { if ( isTaggedInt(w) )
   { intptr_t code = valInt(w);
 
-    return code >= 0 && code <= CHARCODE_MAX;
+    return code >= 0 && code <= PLMAXWCHAR;
   }
 
   return FALSE;

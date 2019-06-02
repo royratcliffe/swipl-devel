@@ -1918,7 +1918,7 @@ PL_get_module(term_t t, module_t *m)
 
 
 #undef _PL_get_arg			/* undo global definition */
-void
+int
 _PL_get_arg_sz(size_t index, term_t t, term_t a)
 { GET_LD
   word w = valHandle(t);
@@ -1926,24 +1926,27 @@ _PL_get_arg_sz(size_t index, term_t t, term_t a)
   Word p = &f->arguments[index-1];
 
   setHandle(a, linkVal(p));
+  return TRUE;
 }
-void
+int
 _PL_get_arg(int index, term_t t, term_t a)
 { if ( index >= 0 )
-    _PL_get_arg_sz(index, t, a);
-  else
+  { _PL_get_arg_sz(index, t, a);
+    return TRUE;
+  } else
     fatalError("Arity out of range: %d", a);
 }
 #define _PL_get_arg(i, t, a) _PL_get_arg__LD(i, t, a PASS_LD)
 
 
-void
+int
 _PL_get_arg__LD(size_t index, term_t t, term_t a ARG_LD)
 { word w = valHandle(t);
   Functor f = (Functor)valPtr(w);
   Word p = &f->arguments[index-1];
 
   setHandle(a, linkVal(p));
+  return TRUE;
 }
 
 
@@ -2264,9 +2267,18 @@ isCallable(word w ARG_LD)
 { if ( isTerm(w) )
   { Functor f = valueTerm(w);
     FunctorDef fd = valueFunctor(f->definition);
+    Atom ap = atomValue(fd->name);
 
-    if ( isCallableAtom(fd->name) )
+    if ( true(ap->type, PL_BLOB_TEXT) || fd->name == ATOM_nil )
       return TRUE;
+    if ( ap->type == &_PL_closure_blob )
+    { closure *c = (closure*)ap->name;
+
+      if ( c->def.functor->arity == fd->arity )
+	return TRUE;
+    }
+
+    return FALSE;
   }
 
   return isTextAtom(w) != 0;

@@ -182,6 +182,13 @@
 #define MSG_TABLING_WORK	 300
 #define MSG_TABLING_MODED	 301
 #define MSG_TABLING_NEG		 302
+#define MSG_TABLING_SIMPLIFY	 303
+#define MSG_TABLING_DELAY	 304
+#define MSG_TABLING_DELAY_VAR	 305
+#define MSG_TABLING_AC		 306
+
+#define TABLING_NO_SIMPLIFY	 310		/* these affect behaviour */
+#define TABLING_NO_AC		 311
 
 #define CHK_SECURE              1000
 #define CHK_HIGH_ARITY          1001

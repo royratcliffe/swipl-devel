@@ -73,6 +73,7 @@ typedef struct
     code thread_local[3];		/* S_THREAD_LOCAL */
     code multifile[3];			/* S_MULTIFILE */
     code staticp[3];			/* S_STATIC */
+    code wrapper[3];			/* S_WRAP */
   } supervisors;
 } PL_code_data_t;
 
@@ -312,6 +313,7 @@ struct PL_global_data
     int64_t	cgc_count;		/* # clause GC calls */
     int64_t	cgc_reclaimed;		/* # clauses reclaimed */
     double	cgc_time;		/* Total time spent in CGC */
+    size_t	dirty;			/* # dirty clauses */
     size_t	erased;			/* # erased pending clauses */
     size_t	erased_size;		/* memory used by them */
     size_t	erased_size_last;	/* memory used by them after last CGC */
@@ -559,6 +561,8 @@ struct PL_local_data
     struct trie *variant_table;		/* Variant --> table */
     trie_allocation_pool node_pool;	/* Node allocation pool for tries */
     int	has_scheduling_component;	/* A leader was created */
+    int in_answer_completion;		/* Running answer completion */
+    term_t delay_list;			/* Global delay list */
   } tabling;
 
   struct

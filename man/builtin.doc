@@ -973,7 +973,7 @@ annotated using `0' (see meta_predicate/1). Other cases need a real
 predicate definition.
 
 The expansion hook can use prolog_load_context/2 to obtain information
-about the context in which the goal is exanded such as the module,
+about the context in which the goal is expanded such as the module,
 variable names or the encapsulating term.
 
     \predicate{expand_goal}{2}{+Goal1, -Goal2}
@@ -3839,6 +3839,11 @@ The definition can \emph{not} be modified using assertz/1 and friends.
 This property is the opposite from \const{dynamic}, i.e., for each
 defined predicate, either \const{static} or \const{dynamic} is true but
 never both.
+
+    \termitem{tabled}{How}
+True of the predicate is \jargon{tabled}.  Currently, \arg{How} is
+always \const{default}, which is the same as \const{variant}. Future
+versions may provide \const{subsumptive}.  See table/1 for details.
 
     \termitem{thread_local}{}
 If true (only possible on the multithreaded version) each thread has

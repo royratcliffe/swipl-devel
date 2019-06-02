@@ -81,10 +81,13 @@ COMMON(void)		unallocStream(IOSTREAM *s);
 
 /* pl-supervisor.c */
 
+COMMON(Code)		allocCodes(size_t len);
 COMMON(void)		freeCodesDefinition(Definition def, int linger);
+COMMON(void)		freeSupervisor(Definition def, Code code, int linger);
 COMMON(int)		createForeignSupervisor(Definition def, Func f);
 COMMON(int)		createUndefSupervisor(Definition def);
-COMMON(int)		createSupervisor(Definition def);
+COMMON(Code)		createSupervisor(Definition def);
+COMMON(int)		setSupervisor(Definition def);
 COMMON(size_t)		supervisorLength(Code base);
 COMMON(void)		initSupervisors(void);
 
@@ -231,7 +234,7 @@ COMMON(int)		PL_unify_termv(term_t t, va_list args);
 COMMON(int)		PL_unify_termv__LD(term_t t ARG_LD, va_list args);
 COMMON(term_t)		pushWordAsTermRef__LD(Word p ARG_LD);
 COMMON(void)		popTermRef__LD(ARG1_LD);
-COMMON(void)		_PL_get_arg__LD(size_t index, term_t t, term_t a ARG_LD);
+COMMON(int)		_PL_get_arg__LD(size_t index, term_t t, term_t a ARG_LD);
 COMMON(term_t)		PL_new_term_ref__LD(ARG1_LD);
 COMMON(term_t)		PL_new_term_ref_noshift__LD(ARG1_LD);
 COMMON(term_t)		PL_new_term_refs__LD(int n ARG_LD);
@@ -427,7 +430,7 @@ COMMON(intptr_t)	skip_list(Word l, Word *tailp ARG_LD);
 COMMON(intptr_t)	lengthList(term_t list, int errors);
 COMMON(int)		is_acyclic(Word p ARG_LD);
 COMMON(intptr_t)	numberVars(term_t t, nv_options *opts, intptr_t n ARG_LD);
-COMMON(int)		term_var_skeleton(term_t t, term_t vs ARG_LD);
+COMMON(ssize_t)		term_var_skeleton(term_t t, term_t vs ARG_LD);
 COMMON(int)		duplicate_term(term_t in, term_t copy ARG_LD);
 COMMON(word)		stringToList(char *s);
 COMMON(foreign_t)	pl_sub_atom(term_t atom,

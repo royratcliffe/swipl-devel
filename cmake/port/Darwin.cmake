@@ -39,12 +39,26 @@ elseif(MACOSX_DEPENDENCIES_FROM STREQUAL "Homebrew")
   set(Readline_ROOT /usr/local/opt/readline)
 elseif(MACOSX_DEPENDENCIES_FROM STREQUAL None)
   message("-- Trying to build without Macports or Homebrew dependencies")
+elseif(MACOSX_DEPENDENCIES_FROM MATCHES "/.*")
+  message("-- Trying to build with dependencies from ${MACOSX_DEPENDENCIES_FROM}")
+  set(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+      "${MACOSX_DEPENDENCIES_FROM}/lib")
+  set(CMAKE_INCLUDE_PATH ${CMAKE_INCLUDE_PATH}
+      "${MACOSX_DEPENDENCIES_FROM}/include")
 else()
   message(FATAL_ERROR "Invalid MACOSX_DEPENDENCIES_FROM: ${MACOSX_DEPENDENCIES_FROM}")
 endif()
 
 if(BUILD_MACOS_BUNDLE)
   set(MACOS_APP "SWI-Prolog")
+
+# These definitions must be here rather than in CPack.cmake as that
+# file is loaded after attaching packages/swipl-win and thus isn't picked
+# up.  See URL below for the defined variables.
+# https://cmake.org/cmake/help/latest/prop_tgt/MACOSX_BUNDLE_INFO_PLIST.html
+
+  set(MACOSX_BUNDLE_BUNDLE_NAME "SWI-Prolog")
+  set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${SWIPL_VERSION_STRING}")
 
   set(X11_ROOT /opt/X11)
   set(Freetype_ROOT /opt/X11)

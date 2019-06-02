@@ -37,14 +37,18 @@
 :- module('$tabling',
           [ (table)/1,                  % +PI ...
 
-            tnot/1,                     % :Goal
+            (tnot)/1,                     % :Goal
 
             current_table/2,            % :Variant, ?Table
             abolish_all_tables/0,
             abolish_table_subgoals/1,   % :Subgoal
 
             start_tabling/2,            % +Wrapper, :Worker
-            start_tabling/4             % +Wrapper, :Worker, :Variant, ?ModeArgs
+            start_tabling/4,            % +Wrapper, :Worker, :Variant, ?ModeArgs
+
+            '$wrap_tabled'/1,		% :Head
+            '$moded_wrap_tabled'/4,	% :Head, +ModeTest, +Variant, +Moded
+            '$wfs_call'/2               % :Goal, -Delays
           ]).
 
 :- meta_predicate
@@ -52,7 +56,8 @@
     start_tabling(+, 0),
     start_tabling(+, 0, +, ?),
     current_table(:, -),
-    abolish_table_subgoals(:).
+    abolish_table_subgoals(:),
+    '$wfs_call'(0, :).
 
 /** <module> Tabled execution (SLG WAM)
 
@@ -73,14 +78,31 @@ goal_expansion(tdebug(Topic, Fmt, Args), Expansion) :-
     ).
 goal_expansion(tdebug(Goal), Expansion) :-
     (   current_prolog_flag(prolog_debug, true)
-    ->  Expansion = Goal
+    ->  Expansion = (Goal->true;print_message(error, goal_failed(Goal)))
     ;   Expansion = true
     ).
 
 :- if(current_prolog_flag(prolog_debug, true)).
-wl_goal(WorkList, Wrapper, Skeleton) :-
+wl_goal(tnot(WorkList), ~(Goal), Skeleton) :-
+    !,
     '$tbl_worklist_data'(WorkList, worklist(_SCC,Trie,_,_,_)),
-    '$tbl_table_status'(Trie, _Status, Wrapper, Skeleton).
+    '$tbl_table_status'(Trie, _Status, Wrapper, Skeleton),
+    unqualify_goal(Wrapper, user, Goal).
+wl_goal(WorkList, Goal, Skeleton) :-
+    '$tbl_worklist_data'(WorkList, worklist(_SCC,Trie,_,_,_)),
+    '$tbl_table_status'(Trie, _Status, Wrapper, Skeleton),
+    unqualify_goal(Wrapper, user, Goal).
+
+trie_goal(ATrie, Goal, Skeleton) :-
+    '$tbl_table_status'(ATrie, _Status, Wrapper, Skeleton),
+    unqualify_goal(Wrapper, user, Goal).
+
+delay_goals(List, Goal) :-
+    delay_goals(List, user, Goal).
+
+user_goal(Goal, UGoal) :-
+    unqualify_goal(Goal, user, UGoal).
+
 :- endif.
 
 %!  table(+PredicateIndicators)
@@ -117,34 +139,36 @@ table(PIList) :-
 %   @compat This interface may change or disappear without notice
 %           from future versions.
 
+'$wrap_tabled'(Head) :-
+    '$wrap_predicate'(Head, table, Wrapped,
+                      start_tabling(Head, Wrapped)).
+
 start_tabling(Wrapper, Worker) :-
     '$tbl_variant_table'(Wrapper, Trie, Status, Skeleton),
     (   Status == complete
-    ->  trie_gen(Trie, Skeleton, _)
+    ->  '$tbl_answer_update_dl'(Trie, Skeleton)
     ;   Status == fresh
-    ->  early_completion(Skeleton, Worker, Worker1),
-        '$tbl_create_subcomponent'(SCC),
+    ->  '$tbl_create_subcomponent'(SCC, Trie),
+        tdebug(user_goal(Wrapper, Goal)),
+        tdebug(schedule, 'Created component ~d for ~p', [SCC, Goal]),
         setup_call_catcher_cleanup(
             true,
-            run_leader(Skeleton, Worker1, Trie, SCC, LStatus),
+            run_leader(Skeleton, Worker, Trie, SCC, LStatus),
             Catcher,
             finished_leader(Catcher, SCC, Wrapper)),
-        tdebug(schedule, 'Leader ~p done, status = ~p', [Wrapper, LStatus]),
+        tdebug(schedule, 'Leader ~p done, status = ~p', [Goal, LStatus]),
         done_leader(LStatus, SCC, Skeleton, Trie)
     ;   % = run_follower, but never fresh and Status is a worklist
         shift(call_info(Skeleton, Status))
     ).
 
-early_completion(v, Worker, once(Worker)) :- !.
-early_completion(_, Worker, Worker).
-
-done_leader(complete, _SCC, Wrapper, Trie) :-
+done_leader(complete, _SCC, Skeleton, Trie) :-
     !,
-    trie_gen(Trie, Wrapper, _).
-done_leader(final, SCC, Wrapper, Trie) :-
+    '$tbl_answer_update_dl'(Trie, Skeleton).
+done_leader(final, SCC, Skeleton, Trie) :-
     !,
     '$tbl_free_component'(SCC),
-    trie_gen(Trie, Wrapper, _).
+    '$tbl_answer_update_dl'(Trie, Skeleton).
 done_leader(_,_,_,_).
 
 finished_leader(exit, _, _) :-
@@ -173,129 +197,144 @@ finished_leader(Catcher, SCC, Wrapper) :-
 
 run_leader(Skeleton, Worker, Trie, SCC, Status) :-
     tdebug('$tbl_table_status'(Trie, _Status, Wrapper, Skeleton)),
-    tdebug(schedule, '-> Activate component ~p for ~p', [SCC, Wrapper]),
+    tdebug(user_goal(Wrapper, Goal)),
+    tdebug(schedule, '-> Activate component ~p for ~p', [SCC, Goal]),
     activate(Skeleton, Worker, Trie, Worklist),
-    tdebug(schedule, '-> Complete component ~p for ~p', [SCC, Wrapper]),
+    tdebug(schedule, '-> Complete component ~p for ~p', [SCC, Goal]),
     completion(SCC),
-    tdebug(schedule, '-> Completed component ~p for ~p', [SCC, Wrapper]),
+    tdebug(schedule, '-> Completed component ~p for ~p', [SCC, Goal]),
     '$tbl_component_status'(SCC, Status),
     (   Status == merged
-    ->  tdebug(schedule, 'Turning leader ~p into follower', [Wrapper]),
-        (   tdebug(copy_term(Wrapper+Skeleton, Wrapper1+Skeleton1)),
-            trie_gen(Trie, Skeleton1, _),
-            tdebug(answer, 'Adding old answer ~p to worklist ~p',
-                   [ Wrapper1, Worklist]),
-            '$tbl_wkl_add_answer'(Worklist, Skeleton1),
-            fail
-        ;   true
-        ),
+    ->  tdebug(merge, 'Turning leader ~p into follower', [Goal]),
+        '$tbl_wkl_make_follower'(Worklist),
         shift(call_info(Skeleton, Worklist))
     ;   true                                    % completed
     ).
 
 activate(Wrapper, Worker, Trie, WorkList) :-
     '$tbl_new_worklist'(WorkList, Trie),
-    %assertz(user:wl(Wrapper, WorkList)),
     tdebug(activate, '~p: created wl=~p, trie=~p',
            [Wrapper, WorkList, Trie]),
-    (   delim(Wrapper, Worker, WorkList),
+    (   reset_delays,
+        delim(Wrapper, Worker, WorkList, []),   % FIXME: is this right?
         fail
     ;   true
     ).
 
-%!  delim(+Wrapper, +Worker, +WorkList)
+%!  delim(+Wrapper, +Worker, +WorkList, +Delays)
 %
 %   Call/resume Worker for non-mode directed tabled predicates.
 
-delim(Wrapper, Worker, WorkList) :-
-    reset(work_and_add_answer(Worker, Wrapper, WorkList),
-          SourceCall, Continuation),
-    add_answer_or_suspend(Continuation, Wrapper,
-                          WorkList, SourceCall).
-
-work_and_add_answer(Worker, Wrapper, WorkList) :-
-    call(Worker),
-    tdebug(answer, 'New answer ~p for ~p', [Wrapper,WorkList]),
-    '$tbl_wkl_add_answer'(WorkList, Wrapper).
-
-
-add_answer_or_suspend(0, _Wrapper, _WorkList, _) :-
-    !.
-add_answer_or_suspend(Continuation, Skeleton, WorkList,
-                      call_info(SrcSkeleton, SourceWL)) :-
-    tdebug(wl_goal(WorkList, Wrapper, _)),
-    tdebug(wl_goal(SourceWL, SrcWrapper, _)),
-    tdebug(schedule, 'Suspended ~p, for solving ~p', [SrcWrapper, Wrapper]),
-    '$tbl_wkl_add_suspension'(
-        SourceWL,
-        dependency(SrcSkeleton, Continuation, Skeleton, WorkList)).
+delim(Wrapper, Worker, WorkList, Delays) :-
+    reset(Worker, SourceCall, Continuation),
+    tdebug(wl_goal(WorkList, Goal, _)),
+    (   Continuation == 0
+    ->  tdebug('$tbl_add_global_delays'(Delays, AllDelays)),
+        tdebug(delay_goals(AllDelays, Cond)),
+        tdebug(answer, 'New answer ~p for ~p (delays = ~p)',
+               [Wrapper, Goal, Cond]),
+        '$tbl_wkl_add_answer'(WorkList, Wrapper, Delays, Complete),
+        Complete == !,
+        !
+    ;   SourceCall = call_info(SrcSkeleton, SourceWL),
+        '$tbl_add_global_delays'(Delays, AllDelays),
+        tdebug(wl_goal(SourceWL, SrcWrapper, _)),
+        tdebug(schedule, 'Suspended ~p, for solving ~p', [SrcWrapper, Wrapper]),
+        '$tbl_wkl_add_suspension'(
+            SourceWL,
+            dependency(SrcSkeleton, Continuation, Wrapper, WorkList, AllDelays))
+    ).
 
 %!  start_tabling(:Wrapper, :Implementation, +Variant, +ModeArgs)
 %
 %   As start_tabling/2, but in addition separates the data stored in the
 %   answer trie in the Variant and ModeArgs.
 
+'$moded_wrap_tabled'(Head, ModeTest, WrapperNoModes, ModeArgs) :-
+    '$wrap_predicate'(Head, table, Wrapped,
+                      (   ModeTest,
+                          start_tabling(Head, Wrapped, WrapperNoModes, ModeArgs)
+                      )).
+
+
 start_tabling(Wrapper, Worker, WrapperNoModes, ModeArgs) :-
     '$tbl_variant_table'(WrapperNoModes, Trie, Status, _Skeleton),
     (   Status == complete
     ->  trie_gen(Trie, WrapperNoModes, ModeArgs)
     ;   Status == fresh
-    ->  '$tbl_create_subcomponent'(SubComponent),
+    ->  '$tbl_create_subcomponent'(SubComponent, Trie),
         setup_call_catcher_cleanup(
             true,
             run_leader(Wrapper, WrapperNoModes, ModeArgs,
-                       Worker, Trie, SubComponent),
+                       Worker, Trie, SubComponent, LStatus),
             Catcher,
             finished_leader(Catcher, SubComponent, Wrapper)),
-        tdebug(schedule, 'Leader ~p done, modeargs = ~p', [Wrapper, ModeArgs]),
-        trie_gen(Trie, WrapperNoModes, ModeArgs)
+        tdebug(schedule, 'Leader ~p done, modeargs = ~p, status = ~p',
+               [Wrapper, ModeArgs, LStatus]),
+        moded_done_leader(LStatus, SubComponent, WrapperNoModes, ModeArgs, Trie)
     ;   % = run_follower, but never fresh and Status is a worklist
         shift(call_info(Wrapper, Status))
     ).
 
+moded_done_leader(complete, _SCC, WrapperNoModes, ModeArgs, Trie) :-
+    !,
+    trie_gen(Trie, WrapperNoModes, ModeArgs).
+moded_done_leader(final, SCC, WrapperNoModes, ModeArgs, Trie) :-
+    !,
+    '$tbl_free_component'(SCC),
+    trie_gen(Trie, WrapperNoModes, ModeArgs).
+moded_done_leader(_, _, _, _, _).
+
+
 get_wrapper_no_mode_args(M:Wrapper, M:WrapperNoModes, ModeArgs) :-
     M:'$table_mode'(Wrapper, WrapperNoModes, ModeArgs).
 
-run_leader(Wrapper, WrapperNoModes, ModeArgs, Worker, Trie, SCC) :-
-    activate(Wrapper, WrapperNoModes, ModeArgs, Worker, Trie, _Worklist),
+run_leader(Wrapper, WrapperNoModes, ModeArgs, Worker, Trie, SCC, Status) :-
+    moded_activate(Wrapper, WrapperNoModes, ModeArgs, Worker, Trie, Worklist),
     completion(SCC),
     '$tbl_component_status'(SCC, Status),
-    (   Status == final
-    ->  '$tbl_free_component'(SCC)
-    ;   true                                    % What if merged?
+    (   Status == merged
+    ->  tdebug(scc, 'Turning leader ~p into follower', [Wrapper]),
+        (   trie_gen(Trie, WrapperNoModes1, ModeArgs1),
+            tdebug(scc, 'Adding old answer ~p+~p to worklist ~p',
+                   [ WrapperNoModes1, ModeArgs1, Worklist]),
+            '$tbl_wkl_mode_add_answer'(Worklist, WrapperNoModes1,
+                                       ModeArgs1, Wrapper),
+            fail
+        ;   true
+        ),
+        shift(call_info(Wrapper, Worklist))
+    ;   true                                    % completed
     ).
 
 
-activate(Wrapper, WrapperNoModes, _ModeArgs, Worker, Trie, WorkList) :-
+moded_activate(Wrapper, WrapperNoModes, _ModeArgs, Worker, Trie, WorkList) :-
     '$tbl_new_worklist'(WorkList, Trie),
-    (   delim(Wrapper, WrapperNoModes, Worker, WorkList),
+    (   moded_delim(Wrapper, WrapperNoModes, Worker, WorkList, []), % FIXME: Delay list
         fail
     ;   true
     ).
 
-%!  delim(+Wrapper, +WrapperNoModes, +Worker, +WorkList).
+%!  moded_delim(+Wrapper, +WrapperNoModes, +Worker, +WorkList, +Delays).
 %
 %   Call/resume Worker for mode directed tabled predicates.
 
-delim(Wrapper, WrapperNoModes, Worker, WorkList) :-
-    reset(work_and_add_moded_answer(Worker, Wrapper, WrapperNoModes, WorkList),
-          SourceCall, Continuation),
-    add_answer_or_suspend(Continuation, Wrapper, WrapperNoModes,
-                          WorkList, SourceCall).
+moded_delim(Wrapper, WrapperNoModes, Worker, WorkList, Delays) :-
+    reset(Worker, SourceCall, Continuation),
+    moded_add_answer_or_suspend(Continuation, Wrapper, WrapperNoModes,
+                                WorkList, SourceCall, Delays).
 
-work_and_add_moded_answer(Worker, Wrapper, WrapperNoModes, WorkList) :-
-    call(Worker),
+moded_add_answer_or_suspend(0, Wrapper, WrapperNoModes, WorkList, _, _) :-
+    !,
     get_wrapper_no_mode_args(Wrapper, _, ModeArgs),
     '$tbl_wkl_mode_add_answer'(WorkList, WrapperNoModes,
-                               ModeArgs, Wrapper).
-
-add_answer_or_suspend(0, _Wrapper, _WrapperNoModes, _WorkList, _) :-
-    !.
-add_answer_or_suspend(Continuation, Wrapper, _WrapperNoModes, WorkList,
-                      call_info(SrcWrapper, SourceWL)) :-
+                               ModeArgs, Wrapper). % FIXME: Add Delays
+moded_add_answer_or_suspend(Continuation, Wrapper, _WrapperNoModes, WorkList,
+                      call_info(SrcWrapper, SourceWL),
+                      Delays) :-
     '$tbl_wkl_add_suspension'(
         SourceWL,
-        dependency(SrcWrapper, Continuation, Wrapper, WorkList)).
+        dependency(SrcWrapper, Continuation, Wrapper, WorkList, Delays)).
 
 
 %!  update(+Wrapper, +A1, +A2, -A3) is semidet.
@@ -315,46 +354,60 @@ update(M:Wrapper, A1, A2, A3) :-
 
 %!  completion(+Component)
 %
-%   Wakeup suspended goals until no new answers are generated.
+%   Wakeup suspended goals until  no  new   answers  are  generated. The
+%   second argument of completion/2 keeps the current heap _delay list_,
+%   called the _D_ register in th XSB   literature.  It is modified from
+%   the C core (negative_worklist())   using (backtrackable) destructive
+%   assignment. The C core walks the   environment  to find completion/2
+%   and from there the delay list.
 
 completion(SCC) :-
-    % show_scc('Complete'),
-    '$tbl_component_status'(SCC, Status),
-    (   Status == active
-    ->  (   '$tbl_pop_worklist'(SCC, WorkList)
-        ->  tdebug(schedule, 'Complete WL ~p in ~p',
-                   [WorkList, SCC]),
-            completion_step(WorkList),
-            completion(SCC)
-        ;   tdebug(schedule, 'Completed ~p',
-                   [SCC]),
-            '$tbl_table_complete_all'(SCC)
-        )
-    ;   Status == merged
-    ->  tdebug(schedule, 'Aborted completion (SCC=~p)',
-               [scc(SCC)])
+    (   reset_delays,
+        completion_(SCC),
+        fail
     ;   true
     ).
 
-completion_step(SourceTable) :-
+completion_(SCC) :-
+    repeat,
+    '$tbl_component_status'(SCC, Status),
+    (   Status == active
+    ->  (   '$tbl_pop_worklist'(SCC, WorkList)
+        ->  tdebug(wl_goal(WorkList, Goal, _)),
+            tdebug(schedule, 'Complete ~p in ~p', [Goal, scc(SCC)]),
+            completion_step(WorkList),
+            fail
+        ;   tdebug(schedule, 'Completed ~p', [scc(SCC)]),
+            '$tbl_table_complete_all'(SCC)
+        )
+    ;   Status == merged
+    ->  tdebug(schedule, 'Aborted completion of ~p', [scc(SCC)])
+    ;   true
+    ),
+    !.
+
+completion_step(WorkList) :-
     (   '$tbl_trienode'(Reserved),
-        '$tbl_wkl_work'(SourceTable,
+        '$tbl_wkl_work'(WorkList,
                         Answer, ModeArgs,
-                        Goal, Continuation, Wrapper, TargetWorklist),
-        tdebug(wl_goal(SourceTable, SourceGoal, _)),
+                        Goal, Continuation, Wrapper, TargetWorklist, Delays),
+        tdebug(wl_goal(WorkList, SourceGoal, _)),
         tdebug(wl_goal(TargetWorklist, TargetGoal, _Skeleton)),
         (   ModeArgs == Reserved
-        ->  tdebug(schedule, 'Resuming ~p, calling ~p with ~p',
-                   [TargetGoal, SourceGoal, Answer]),
+        ->  tdebug(delay_goals(Delays, Cond)),
+            tdebug(schedule, 'Resuming ~p, calling ~p with ~p (delays = ~p)',
+                   [TargetGoal, SourceGoal, Answer, Cond]),
             Goal = Answer,
-            delim(Wrapper, Continuation, TargetWorklist)
+            delim(Wrapper, Continuation, TargetWorklist, Delays)
         ;   get_wrapper_no_mode_args(Goal, Answer, ModeArgs),
             get_wrapper_no_mode_args(Wrapper, WrapperNoModes, _),
-            delim(Wrapper, WrapperNoModes, Continuation, TargetWorklist)
+            moded_delim(Wrapper, WrapperNoModes, Continuation, TargetWorklist,
+                        Delays)
         ),
         fail
     ;   true
     ).
+
 
 		 /*******************************
 		 *     STRATIFIED NEGATION	*
@@ -368,22 +421,30 @@ completion_step(SourceTable) :-
 
 tnot(Goal) :-
     '$tbl_variant_table'(Goal, Trie, Status, Skeleton),
-    (   Status == complete
-    ->  tdebug(tnot, 'tnot: ~p: complete', [Goal]),
-        \+ trie_gen(Trie, Skeleton, _)
+    (   '$tbl_answer_dl'(Trie, _, true)
+    ->  fail
+    ;   '$tbl_answer_dl'(Trie, _, _)
+    ->  add_delay(Trie)
+    ;   Status == complete
+    ->  true
     ;   Status == fresh
     ->  tdebug(tnot, 'tnot: ~p: fresh', [Goal]),
         (   call(Goal),
             fail
         ;   '$tbl_variant_table'(Goal, Trie, NewStatus, NewSkeleton),
             tdebug(tnot, 'tnot: fresh ~p now ~p', [Goal, NewStatus]),
-            (   NewStatus == complete
-            ->  \+ trie_gen(Trie, NewSkeleton, _)
+            (   '$tbl_answer_dl'(Trie, _, true)
+            ->  fail
+            ;   '$tbl_answer_dl'(Trie, _, _)
+            ->  add_delay(Trie)
+            ;   NewStatus == complete
+            ->  true
             ;   negation_suspend(Goal, NewSkeleton, NewStatus)
             )
         )
     ;   negation_suspend(Goal, Skeleton, Status)
     ).
+
 
 %!  negation_suspend(+Goal, +Skeleton, +Worklist)
 %
@@ -396,12 +457,78 @@ tnot(Goal) :-
 negation_suspend(Wrapper, Skeleton, Worklist) :-
     tdebug(tnot, 'negation_suspend ~p (wl=~p)', [Wrapper, Worklist]),
     '$tbl_wkl_negative'(Worklist),
-    shift(call_info(Skeleton, Worklist)),
-    (   '$tbl_wkl_is_false'(Worklist)
-    ->  tdebug(tnot, 'negation_suspend: resume ~p is true', [Wrapper])
-    ;   tdebug(tnot, 'negation_suspend: resume ~p incomplete', [Wrapper]),
-        fail
+    shift(call_info(Skeleton, tnot(Worklist))),
+    tdebug(tnot, 'negation resume ~p (wl=~p)', [Wrapper, Worklist]),
+    '$tbl_wkl_is_false'(Worklist).
+
+
+		 /*******************************
+		 *           DELAY LISTS	*
+		 *******************************/
+
+add_delay(Delay) :-
+    '$tbl_delay_list'(DL0),
+    '$tbl_set_delay_list'([Delay|DL0]).
+
+reset_delays :-
+    '$tbl_set_delay_list'([]).
+
+%!  '$wfs_call'(:Goal, :Delays)
+%
+%   Call Goal and provide WFS delayed goals  as a conjunction in Delays.
+%   This  predicate  is  teh  internal  version  of  call_delays/2  from
+%   library(wfs).
+
+'$wfs_call'(Goal, M:Delays) :-
+    '$tbl_delay_list'(DL0),
+    reset_delays,
+    call(Goal),
+    delay_list(M, Delays),
+    '$append'(DL0, Delays, DL),
+    '$tbl_set_delay_list'(DL).
+
+delay_list(M, Delays) :-
+    '$tbl_delay_list'(DL),
+    delay_goals(DL, M, Delays).
+
+delay_goals([], _, true) :-
+    !.
+delay_goals([AT+AN|T], M, Goal) :-
+    !,
+    (   integer(AN)
+    ->  at_delay_goal(AT, G0, Answer),
+        trie_term(AN, Answer)
+    ;   AN = G0
+    ),
+    unqualify_goal(G0, M, G1),
+    GN = G1,
+    (   T == []
+    ->  Goal = GN
+    ;   Goal = (GN,GT),
+        delay_goals(T, M, GT)
     ).
+delay_goals([AT|T], M, Goal) :-
+    at_delay_goal(AT, G0, _Skeleton),
+    unqualify_goal(G0, M, G1),
+    GN = tnot(G1),
+    (   T == []
+    ->  Goal = GN
+    ;   Goal = (GN,GT),
+        delay_goals(T, M, GT)
+    ).
+
+at_delay_goal(tnot(Trie), tnot(Goal), Skeleton) :-
+    !,
+    '$tbl_table_status'(Trie, _Status, Wrapper, Skeleton),
+    unqualify_goal(Wrapper, user, Goal).
+at_delay_goal(Trie, Goal, Skeleton) :-
+    '$tbl_table_status'(Trie, _Status, Wrapper, Skeleton),
+    unqualify_goal(Wrapper, user, Goal).
+
+unqualify_goal(M:Goal, M, Goal0) :-
+    !,
+    Goal0 = Goal.
+unqualify_goal(Goal, _, Goal).
 
 
                  /*******************************
@@ -453,7 +580,6 @@ current_table(M:Variant, Trie) :-
 
 :- multifile
     system:term_expansion/2,
-    prolog:rename_predicate/2,
     tabled/2.
 :- dynamic
     system:term_expansion/2.
@@ -477,63 +603,36 @@ wrappers(Name/Arity) -->
     { atom(Name), integer(Arity), Arity >= 0,
       !,
       functor(Head, Name, Arity),
-      check_undefined(Name/Arity),
-      atom_concat(Name, ' tabled', WrapName),
-      Head =.. [Name|Args],
-      WrappedHead =.. [WrapName|Args],
       prolog_load_context(module, Module),
       '$tbl_trienode'(Reserved)
     },
     [ '$tabled'(Head),
       '$table_mode'(Head, Head, Reserved),
-      (   Head :-
-             start_tabling(Module:Head, WrappedHead)
-      )
+      (:- initialization('$wrap_tabled'(Module:Head), now))
     ].
 wrappers(ModeDirectedSpec) -->
     { callable(ModeDirectedSpec),
       !,
       functor(ModeDirectedSpec, Name, Arity),
       functor(Head, Name, Arity),
-      check_undefined(Name/Arity),
-      atom_concat(Name, ' tabled', WrapName),
-      Head =.. [Name|Args],
-      WrappedHead =.. [WrapName|Args],
       extract_modes(ModeDirectedSpec, Head, Variant, Modes, Moded),
       updater_clauses(Modes, Head, UpdateClauses),
       prolog_load_context(module, Module),
       mode_check(Moded, ModeTest),
       (   ModeTest == true
-      ->  WrapClause = (Head :- start_tabling(Module:Head, WrappedHead))
-      ;   WrapClause = (Head :- ModeTest,
-                            start_tabling(Module:Head, WrappedHead,
-                                          Module:Variant, Moded))
+      ->  WrapClause = '$wrap_tabled'(Module:Head)
+      ;   WrapClause = '$moded_wrap_tabled'(Module:Head, ModeTest,
+          Module:Variant, Moded)
       )
     },
     [ '$tabled'(Head),
       '$table_mode'(Head, Variant, Moded),
-      WrapClause
+      (:- initialization(WrapClause, now))
     | UpdateClauses
     ].
 wrappers(TableSpec) -->
     { '$type_error'(table_desclaration, TableSpec)
     }.
-
-%!  check_undefined(+PI)
-%
-%   Verify the predicate has no clauses when the :- table is declared.
-%
-%   @tbd: future versions may rename the existing predicate.
-
-check_undefined(Name/Arity) :-
-    functor(Head, Name, Arity),
-    prolog_load_context(module, Module),
-    current_predicate(Module:Name/Arity),
-    \+ '$get_predicate_attribute'(Module:Head, imported, _),
-    clause(Module:Head, _),
-    !,
-    '$permission_error'(table, procedure, Name/Arity).
-check_undefined(_).
 
 %!  mode_check(+Moded, -TestCode)
 %
@@ -718,29 +817,6 @@ sum(S0, S1, S) :- S is S0+S1.
 		 *         RENAME WORKER	*
 		 *******************************/
 
-%!  prolog:rename_predicate(:Head0, :Head) is semidet.
-%
-%   Hook into term_expansion for  post   processing  renaming of the
-%   generated predicate.
-
-prolog:rename_predicate(M:Head0, M:Head) :-
-    current_predicate(M:'$tabled'/1),
-    call(M:'$tabled'(Head0)),
-    \+ '$get_predicate_attribute'(M:'$tabled'(_), imported, _),
-    \+ current_prolog_flag(xref, true),
-    !,
-    rename_term(Head0, Head).
-
-rename_term(Compound0, Compound) :-
-    compound(Compound0),
-    !,
-    compound_name_arguments(Compound0, Name, Args),
-    atom_concat(Name, ' tabled', WrapName),
-    compound_name_arguments(Compound, WrapName, Args).
-rename_term(Name, WrapName) :-
-    atom_concat(Name, ' tabled', WrapName).
-
-
 system:term_expansion((:- table(Preds)),
                       [ (:- multifile('$tabled'/1)),
                         (:- multifile('$table_mode'/3)),
@@ -749,3 +825,142 @@ system:term_expansion((:- table(Preds)),
                       ]) :-
     \+ current_prolog_flag(xref, true),
     phrase(wrappers(Preds), Clauses).
+
+
+		 /*******************************
+		 *      ANSWER COMPLETION	*
+		 *******************************/
+
+:- public answer_completion/1.
+
+%!  answer_completion(+AnswerTrie) is det.
+%
+%   Find  positive  loops  in  the  residual   program  and  remove  the
+%   corresponding answers, possibly causing   additional simplification.
+%   This is called from C  if   simplify_component()  detects  there are
+%   conditional answers after simplification.
+%
+%   Note that we are called recursively from   C.  Our caller prepared a
+%   clean new tabling environment and restores   the  old one after this
+%   predicate terminates.
+%
+%   @author This code is by David Warren as part of XSB.
+%   @see called from C, pl-tabling.c, answer_completion()
+
+answer_completion(AnswerTrie) :-
+    tdebug(trie_goal(AnswerTrie, Goal, _Return)),
+    tdebug(ac(start), 'START: Answer completion for ~p', [Goal]),
+    call_cleanup(answer_completion_guarded(AnswerTrie, Propagated),
+                 abolish_table_subgoals(eval_subgoal_in_residual(_))),
+    (   Propagated > 0
+    ->  answer_completion(AnswerTrie)
+    ;   true
+    ).
+
+answer_completion_guarded(AnswerTrie, Propagated) :-
+    (   eval_subgoal_in_residual(AnswerTrie),
+        fail
+    ;   true
+    ),
+    delete_answers_for_failing_calls(Propagated),
+    (   Propagated == 0
+    ->  mark_succeeding_calls_as_answer_completed
+    ;   true
+    ).
+
+%!  delete_answers_for_failing_calls(-Propagated)
+%
+%   Delete answers whose condition  is  determined   to  be  `false` and
+%   return the number of additional  answers   that  changed status as a
+%   consequence of additional simplification propagation.
+
+delete_answers_for_failing_calls(Propagated) :-
+    State = state(0),
+    (   subgoal_residual_trie(ASGF, ESGF),
+        \+ trie_gen(ESGF, _ETmp),
+        tdebug(trie_goal(ASGF, Goal, _0Return)),
+        '$trie_gen_node'(ASGF, _0Return, ALeaf),
+        tdebug(ac(prune), '  Removing answer ~p', [Goal]),
+	'$tbl_force_truth_value'(ALeaf, false, Count),
+        arg(1, State, Prop0),
+        Prop is Prop0+Count-1,
+        nb_setarg(1, State, Prop),
+	fail
+    ;   arg(1, State, Propagated)
+    ).
+
+mark_succeeding_calls_as_answer_completed :-
+    (   subgoal_residual_trie(ASGF, _ESGF),
+        (   '$tbl_answer_dl'(ASGF, _0Return, true)
+        ->  tdebug(trie_goal(ASGF, Answer, _0Return)),
+            tdebug(trie_goal(ASGF, Goal, _0Return)),
+            tdebug(ac(prune), '  Completed ~p on ~p', [Goal, Answer]),
+            '$tbl_set_answer_completed'(ASGF)
+        ),
+        fail
+    ;   true
+    ).
+
+subgoal_residual_trie(ASGF, ESGF) :-
+    '$tbl_variant_table'(VariantTrie),
+    context_module(M),
+    trie_gen(VariantTrie, M:eval_subgoal_in_residual(ASGF), ESGF).
+
+%!  eval_dl_in_residual(+Condition)
+%
+%   Evaluate a condition by only looking at   the  residual goals of the
+%   involved calls.
+
+eval_dl_in_residual(true) :-
+    !.
+eval_dl_in_residual((A;B)) :-
+    !,
+    (   eval_dl_in_residual(A)
+    ;   eval_dl_in_residual(B)
+    ).
+eval_dl_in_residual((A,B)) :-
+    !,
+    eval_dl_in_residual(A),
+    eval_dl_in_residual(B).
+eval_dl_in_residual(tnot(G)) :-
+    !,
+    tdebug(ac, ' ? tnot(~p)', [G]),
+    current_table(G, SGF),
+    tnot(eval_subgoal_in_residual(SGF)).
+eval_dl_in_residual(G) :-
+    tdebug(ac, ' ? ~p', [G]),
+    (   current_table(G, SGF)
+    ->	true
+    ;   more_general_table(G, SGF)
+    ->	true
+    ;	writeln(user_error, 'MISSING CALL? '(G)),
+        fail
+    ),
+    eval_subgoal_in_residual(SGF).
+
+more_general_table(G, Trie) :-
+    term_variables(G, Vars),
+    length(Vars, Len),
+    '$tbl_variant_table'(VariantTrie),
+    trie_gen(VariantTrie, G, Trie),
+    all_vars(Vars),
+    sort(Vars, V2),
+    length(V2, Len).
+
+all_vars([]).
+all_vars([H|T]) :-
+    var(H),
+    all_vars(T).
+
+:- table eval_subgoal_in_residual/1.
+
+%!  eval_subgoal_in_residual(+AnswerTrie)
+%
+%   Derive answers for the variant represented   by  AnswerTrie based on
+%   the residual goals only.
+
+eval_subgoal_in_residual(AnswerTrie) :-
+    '$tbl_answer'(AnswerTrie, _0Return, Condition),
+    tdebug(trie_goal(AnswerTrie, Goal, _0Return)),
+    tdebug(ac, 'Condition for ~p is ~p', [Goal, Condition]),
+    eval_dl_in_residual(Condition).

@@ -35,7 +35,8 @@
 */
 
 :- module(xsb_tests,
-          [ xsb_test/3                  % +SubDir, +File, :Goal
+          [ xsb_test/3,                 % +SubDir, +File, :Goal
+            xsb_cmp_results/2           % +TestFile, +OurResults
           ]).
 :- use_module(library(debug)).
 :- use_module(library(ordsets)).
@@ -57,9 +58,17 @@ xsb_test_id(Base, TestFile, Goal) :-
     load_files(Module:TestFile, [if(changed), dialect(xsb)]),
     abolish_all_tables,
     with_output_to(string(New),
-                   ignore(Module:Goal)),
+                   ignore(@(Module:Goal, Module))),
+    atom_concat(TestFile, '_old', GoldFile),
+    xsb_cmp_results(GoldFile, New).
+
+%!  xsb_cmp_results(TestFile:atom, New:string)
+%
+%   Compare the collected result in New with the contents of TestFile.
+
+xsb_cmp_results(TestFile, New) :-
     string_terms(New, Me),
-    golden_result(TestFile, Gold),
+    read_test_output(TestFile, Gold),
     compare_terms(Me, Gold).
 
 compare_terms(Terms, Terms) :-
@@ -80,10 +89,6 @@ compare_terms(Sorted1, Sorted2) :-
     forall(member(T, Missing), format(user_output, '   > ~q~n', [T])),
     fail.
 
-golden_result(Base, Terms) :-
-    atom_concat(Base, '_old', File),
-    read_test_output(File, Terms).
-
 read_test_output(File, Terms) :-
     read_file_to_string(File, String, []),
     string_terms(String, Terms).
@@ -101,6 +106,13 @@ test_term(Line, _) :-
     !,
     fail.
 test_term(Line, Term) :-
-    term_string(Term, Line),
+    catch(term_string(Term, Line, [module(xsb_tests)]),
+          error(syntax_error(_),_),
+          fail),
+    !,
     numbervars(Term).
+test_term(Line, line(Line)).
+
+% Normally 900, but we need to process tnot x - true as tnot(x)-true
+:- op(499, fy, tnot).
 
