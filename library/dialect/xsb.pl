@@ -47,19 +47,21 @@
             compiler_options/1,			% +Options
 
             xsb_import/2,                       % +Preds, From
-            xsb_dynamic/1,                      % +Preds
 
             fail_if/1,				% :Goal
 
             not_exists/1,			% :Goal
             sk_not/1,				% :Goal
-
-            undefined/0,
-
-            is_most_general_term/1,		% @Term
+            gc_tables/1,                        % -Remaining
 
             cputime/1,				% -Seconds
             walltime/1,				% -Seconds
+            timed_call/2,                       % :Goal, :Options
+
+            debug_ctl/2,                        % +Option, +Value
+
+            fmt_write/2,                        % +Fmt, +Term
+            fmt_write/3,                        % +Stream, +Fmt, +Term
 
             path_sysop/2,                       % +Op, ?Value
             path_sysop/3,                       % +Op, ?Value1, ?Value2
@@ -78,6 +80,10 @@
 :- use_module(library(debug)).
 :- use_module(library(dialect/xsb/source)).
 :- use_module(library(dialect/xsb/tables)).
+:- use_module(library(dialect/xsb/timed_call)).
+:- use_module(library(aggregate)).
+:- use_module(library(option)).
+:- use_module(library(apply)).
 
 /** <module> XSB Prolog compatibility layer
 
@@ -87,7 +93,6 @@ system](http://xsb.sourceforge.net/)
 
 :- meta_predicate
     xsb_import(:, +),                   % Module interaction
-    xsb_dynamic(:),
 
     compile(:, +),                      % Loading files
     load_dyn(:),
@@ -154,11 +159,11 @@ xsb_term_expansion((:- Directive), []) :-
     !.
 xsb_term_expansion((:- import Preds from From),
                    (:- xsb_import(Preds, From))).
+xsb_term_expansion((:- index(_PI, _, _)), []).  % what is tbis?
 xsb_term_expansion((:- index(_PI, _How)), []).
 xsb_term_expansion((:- index(_PI)), []).
 xsb_term_expansion((:- ti(_PI)), []).
 xsb_term_expansion((:- mode(_Modes)), []).
-xsb_term_expansion((:- dynamic(Preds)), (:- xsb_dynamic(Preds))).
 
 user:goal_expansion(In, Out) :-
     prolog_load_context(dialect, xsb),
@@ -169,6 +174,9 @@ user:goal_expansion(In, Out) :-
 
 xsb_mapped_predicate(expand_file_name(File, Expanded),
                      xsb_expand_file_name(File, Expanded)).
+xsb_mapped_predicate(abolish_module_tables(UserMod),
+                     abolish_module_tables(user)) :-
+    UserMod == usermod.
 
 xsb_inlined_goal(fail_if(P), \+(P)).
 
@@ -369,7 +377,8 @@ load_dyn(File)       :-
         style_check(-singleton),
         load_files(File),
         '$style_check'(_, Style)).
-        load_dyn(File, Dir)  :- must_be(oneof([z]), Dir), load_dyn(File).
+
+load_dyn(File, Dir)  :- must_be(oneof([z]), Dir), load_dyn(File).
 load_dync(File)      :- load_dyn(File).
 load_dync(File, Dir) :- load_dyn(File, Dir).
 
@@ -445,34 +454,6 @@ clear_compiler_option(optimize) :-
 clear_compiler_option(allow_redefinition).
 clear_compiler_option(xpp_on).
 
-%!  xsb_dynamic(Preds)
-%
-%   Apply dynamic to the original predicate.  This deals with a sequence
-%   that seems common in XSB:
-%
-%       :- import p/1 from x.
-%       :- dynamic p/1.
-
-xsb_dynamic(M:Preds) :-
-    xsb_dynamic_(Preds, M).
-
-xsb_dynamic_(Preds, _M) :-
-    var(Preds),
-    !,
-    instantiation_error(Preds).
-xsb_dynamic_((A,B), M) :-
-    !,
-    xsb_dynamic_(A, M),
-    xsb_dynamic_(B, M).
-xsb_dynamic_(Name/Arity, M) :-
-    functor(Head, Name, Arity),
-    '$get_predicate_attribute'(M:Head, imported, M2), % predicate_property/2 requires
-    !,                                                % P to be defined.
-    dynamic(M2:Name/Arity).
-xsb_dynamic_(PI, M) :-
-    dynamic(M:PI).
-
-
 		 /*******************************
 		 *            BUILT-INS		*
 		 *******************************/
@@ -502,57 +483,24 @@ not_exists(P) :-
 sk_not(P) :-
     not_exists(P).
 
-
-%!  undefined
+%!  gc_tables(-Remaining) is det.
 %
-%   Explicit undefined evaluation.
+%   The table abolish predicates leave  the   actual  destruction of the
+%   tables to the atom  garbage  collector   to  avoid  deleting  active
+%   tables. This predicate runs garbage_collect_atoms/0   and counts the
+%   remaining erased tables.
 %
-%   @tbd Move to dedicated library?
+%   @compat Due to the heuristic nature of garbage_collect_atoms/0, not
+%   all tables may be reclaimed immediately.
 
-:- table undefined/0.
+gc_tables(Remaining) :-
+    garbage_collect_atoms,
+    aggregate_all(count, remaining_table(_), Remaining).
 
-undefined :-
-    tnot(undefined).
-
-
-%!  is_most_general_term(@X) is semidet.
-%
-%   Succeeds if X is  compound  term   with  all  distinct  variables as
-%   arguments, or if X is an atom. (It fails if X is a cons node.)
-%
-%      ```
-%      ?- is_most_general_term(f(_,_,_,_)).
-%      true.
-%      ?- is_most_general_term(abc).
-%      true.
-%      ?- is_most_general_term(f(X,Y,Z,X)).
-%      false.
-%      ?- is_most_general_term(f(X,Y,Z,a)).
-%      false.
-%      ?- is_most_general_term([_|_]).
-%      false.
-%      ```
-
-is_most_general_term(List) :-
-    is_list(List),
-    !,
-    length(List, Len),
-    sort(List, L2),
-    length(L2, Len).
-is_most_general_term(Term) :-
-    compound(Term),
-    !,
-    compound_name_arity(Term, _, Arity),
-    (   Arity == 0
-    ->  true
-    ;   Term \= [_|_],
-        term_variables(Term, Vars),
-        sort(Vars, Sorted),
-        length(Sorted, Arity)
-    ).
-is_most_general_term(Term) :-
-    atom(Term).
-
+remaining_table(Trie) :-
+    current_blob(Trie, trie),
+    '$is_answer_trie'(Trie),
+    '$atom_references'(Trie, 0).
 
 %!  cputime(-Seconds) is det.
 %
@@ -570,9 +518,82 @@ walltime(Seconds) :-
     statistics(epoch, Epoch),
     Seconds is Now - Epoch.
 
+%!  debug_ctl(+Option, +Value) is det.
+%
+%   Control the XSB debugger. The  current implementation merely defines
+%   the predicate. Much more can be mapped to SWI-Prolog primitives.
 
-%!  path_sysop(+Op, ?Value)
-%!  path_sysop(+Op, ?Arg1, ?Arg2)
+debug_ctl(prompt, off) :-
+    !,
+    leash(-all).
+debug_ctl(prompt, on) :-
+    !,
+    leash(+full).
+debug_ctl(hide, Preds) :-
+    !,
+    '$hide'(Preds).
+debug_ctl(Option, Value) :-
+    debug(xsb(compat), 'XSB: not implemented: ~p',
+          [ debug_ctl(Option, Value) ]).
+
+%!  fmt_write(+Fmt, +Term) is det.
+%!  fmt_write(+Stream, +Fmt, +Term) is det.
+%
+%   C-style formatted write, where  the  arguments   are  formed  by the
+%   arguments of Term.  We map this to format/2,3.
+%
+%   @bug We need to complete the  translation of the fmt_write sequences
+%   to format/2,3 sequences. Probably we should   also  cache the format
+%   translation.
+
+fmt_write(Fmt, Term) :-
+    fmt_write(current_output, Fmt, Term).
+
+fmt_write(Stream, Fmt, Term) :-
+    (   compound(Term)
+    ->  Term =.. [_|Args]
+    ;   Args = [Term]
+    ),
+    string_codes(Fmt, Codes),
+    phrase(format_fmt(Format, []), Codes),
+    format(Stream, Format, Args).
+
+format_fmt(Format, Tail) -->
+    "%",
+    (   format_esc(Format, Tail0)
+    ->  !
+    ;   here(Rest),
+        { print_message(warning, xsb(fmt_write(ignored(Rest)))),
+          fail
+        }
+    ),
+    format_fmt(Tail0, Tail).
+format_fmt([0'~,0'~|T0], T) -->
+    "~",
+    !,
+    format_fmt(T0, T).
+format_fmt([H|T0], T) -->
+    [H],
+    !,
+    format_fmt(T0, T).
+format_fmt(T, T) --> [].
+
+format_esc(Fmt, Tail) -->
+    format_esc(Fmt0),
+    !,
+    { append(Fmt0, Tail, Fmt)
+    }.
+
+format_esc(`~16r`) --> "x".
+format_esc(`~d`) --> "d".
+format_esc(`~f`) --> "f".
+format_esc(`~s`) --> "s".
+format_esc(`%`) --> "%".
+
+here(Rest, Rest, Rest).
+
+%!  path_sysop(+Op, ?Value) is semidet.
+%!  path_sysop(+Op, ?Arg1, ?Arg2) is semidet.
 %
 %   Unified interface to the  operations  on   files.  All  these  calls
 %   succeed iff the corresponding system call succeeds.
@@ -650,6 +671,8 @@ path_sysop(expand, Name, Path) :-
     prolog:message//1.
 
 prolog:message(xsb(not_in_module(File, Module, PI))) -->
-    [ '~p, implementing ~p does not export ~p'-[File, Module, PI] ].
+    [ 'XSB: ~p, implementing ~p does not export ~p'-[File, Module, PI] ].
 prolog:message(xsb(file_loaded_into_mismatched_module(File, Module))) -->
-    [ 'File ~p defines module ~p'-[File, Module] ].
+    [ 'XSB: File ~p defines module ~p'-[File, Module] ].
+prolog:message(xsb(ignored(debug_ctl(Option, Value)))) -->
+    [ 'XSB: debug_ctl(~p,~p) is not implemented'-[Option,Value] ].

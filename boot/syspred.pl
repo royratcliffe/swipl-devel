@@ -40,8 +40,6 @@
             style_check/1,
             (spy)/1,
             (nospy)/1,
-            trace/1,
-            trace/2,
             nospyall/0,
             debugging/0,
             rational/3,
@@ -58,6 +56,7 @@
             '$defined_predicate'/1,
             predicate_property/2,
             '$predicate_property'/2,
+            (dynamic)/2,                        % :Predicates, +Options
             clause_property/2,
             current_module/1,                   % ?Module
             module_property/2,                  % ?Module, ?Property
@@ -86,8 +85,12 @@
             thread_join/1,                      % +Id
             set_prolog_gc_thread/1,		% +Status
 
-            '$wrap_predicate'/4                 % :Head, +Name, -Wrapped, +Body
+            '$wrap_predicate'/5                 % :Head, +Name, -Closure, -Wrapped, +Body
           ]).
+
+:- meta_predicate
+    dynamic(:, +).
+
 
                 /********************************
                 *           DEBUGGER            *
@@ -192,94 +195,9 @@ enum_style_check(Style) :-
 %   Allow user-hooks in the Prolog debugger interaction.  See the calls
 %   below for the provided hooks.  We use a single predicate with action
 %   argument to avoid an uncontrolled poliferation of hooks.
-%
-%   TBD: What hooks to provide for trace/[1,2]
 
 :- multifile
     prolog:debug_control_hook/1.    % +Action
-
-%!  trace(:Preds) is det.
-%!  trace(:Preds, +PortSpec) is det.
-%
-%   Start printing messages if control passes specified ports of
-%   the given predicates.
-
-:- meta_predicate
-    trace(:),
-    trace(:, +).
-
-trace(Preds) :-
-    trace(Preds, +all).
-
-trace(_:X, _) :-
-    var(X),
-    !,
-    throw(error(instantiation_error, _)).
-trace(_:[], _) :- !.
-trace(M:[H|T], Ps) :-
-    !,
-    trace(M:H, Ps),
-    trace(M:T, Ps).
-trace(Pred, Ports) :-
-    '$find_predicate'(Pred, Preds),
-    Preds \== [],
-    set_prolog_flag(debug, true),
-    (   '$member'(PI, Preds),
-            pi_to_head(PI, Head),
-            (   Head = _:_
-            ->  QHead0 = Head
-            ;   QHead0 = user:Head
-            ),
-            '$define_predicate'(QHead0),
-            (   predicate_property(QHead0, imported_from(M))
-            ->  QHead0 = _:Plain,
-                QHead = M:Plain
-            ;   QHead = QHead0
-            ),
-            '$trace'(Ports, QHead),
-            trace_ports(QHead, Tracing),
-            print_message(informational, trace(QHead, Tracing)),
-        fail
-    ;   true
-    ).
-
-trace_alias(all,  [trace_call, trace_redo, trace_exit, trace_fail]).
-trace_alias(call, [trace_call]).
-trace_alias(redo, [trace_redo]).
-trace_alias(exit, [trace_exit]).
-trace_alias(fail, [trace_fail]).
-
-'$trace'([], _) :- !.
-'$trace'([H|T], Head) :-
-    !,
-    '$trace'(H, Head),
-    '$trace'(T, Head).
-'$trace'(+H, Head) :-
-    trace_alias(H, A0),
-    !,
-    tag_list(A0, +, A1),
-    '$trace'(A1, Head).
-'$trace'(+H, Head) :-
-    !,
-    trace_alias(_, [H]),
-    '$set_predicate_attribute'(Head, H, true).
-'$trace'(-H, Head) :-
-    trace_alias(H, A0),
-    !,
-    tag_list(A0, -, A1),
-    '$trace'(A1, Head).
-'$trace'(-H, Head) :-
-    !,
-    trace_alias(_, [H]),
-    '$set_predicate_attribute'(Head, H, false).
-'$trace'(H, Head) :-
-    atom(H),
-    '$trace'(+H, Head).
-
-tag_list([], _, []).
-tag_list([H0|T0], F, [H1|T1]) :-
-    H1 =.. [F, H0],
-    tag_list(T0, F, T1).
 
 :- meta_predicate
     spy(:),
@@ -366,9 +284,7 @@ debugging :-
     !,
     print_message(informational, debugging(on)),
     findall(H, spy_point(H), SpyPoints),
-    print_message(informational, spying(SpyPoints)),
-    findall(trace(H,P), trace_point(H,P), TracePoints),
-    print_message(informational, tracing(TracePoints)).
+    print_message(informational, spying(SpyPoints)).
 debugging :-
     print_message(informational, debugging(off)).
 
@@ -376,19 +292,6 @@ spy_point(Module:Head) :-
     current_predicate(_, Module:Head),
     '$get_predicate_attribute'(Module:Head, spy, 1),
     \+ predicate_property(Module:Head, imported_from(_)).
-
-trace_point(Module:Head, Ports) :-
-    current_predicate(_, Module:Head),
-        '$get_predicate_attribute'(Module:Head, trace_any, 1),
-        \+ predicate_property(Module:Head, imported_from(_)),
-        trace_ports(Module:Head, Ports).
-
-trace_ports(Head, Ports) :-
-    findall(Port,
-            (trace_alias(Port, [AttName]),
-             '$get_predicate_attribute'(Head, AttName, 1)),
-            Ports).
-
 
 %!  flag(+Name, -Old, +New) is det.
 %
@@ -943,14 +846,32 @@ define_or_generate(Pred) :-
     '$get_predicate_attribute'(Pred, quasi_quotation_syntax, 1).
 '$predicate_property'(defined, Pred) :-
     '$get_predicate_attribute'(Pred, defined, 1).
-'$predicate_property'(tabled(default), M:Pred) :-
-    '$c_current_predicate'(_, M:'$tabled'(_)),
-    M:'$tabled'(Pred).
+'$predicate_property'(tabled, Pred) :-
+    '$get_predicate_attribute'(Pred, tabled, 1).
+'$predicate_property'(tabled(Flag), Pred) :-
+    '$get_predicate_attribute'(Pred, tabled, 1),
+    table_flag(Flag, Pred).
+'$predicate_property'(incremental, Pred) :-
+    '$get_predicate_attribute'(Pred, incremental, 1).
+'$predicate_property'(abstract(0), Pred) :-
+    '$get_predicate_attribute'(Pred, abstract, 1).
 
 system_undefined(user:prolog_trace_interception/4).
 system_undefined(user:prolog_exception_hook/4).
 system_undefined(system:'$c_call_prolog'/0).
 system_undefined(system:window_title/2).
+
+table_flag(variant, Pred) :-
+    '$tbl_implementation'(Pred, M:Head),
+    M:'$tabled'(Head, variant).
+table_flag(subsumptive, Pred) :-
+    '$tbl_implementation'(Pred, M:Head),
+    M:'$tabled'(Head, subsumptive).
+table_flag(shared, Pred) :-
+    '$get_predicate_attribute'(Pred, tshared, 1).
+table_flag(incremental, Pred) :-
+    '$get_predicate_attribute'(Pred, incremental, 1).
+
 
 %!  visible_predicate(:Head) is nondet.
 %
@@ -1031,6 +952,68 @@ clause_property(Clause, Property) :-
     '$get_clause_attribute'(Clause, predicate_indicator, PI).
 '$clause_property'(module(M), Clause) :-
     '$get_clause_attribute'(Clause, module, M).
+
+%!  dynamic(:Predicates, +Options) is det.
+%
+%   Define a predicate as dynamic with optionally additional properties.
+%   Defined options are:
+%
+%     - incremental(+Bool)
+%     - abstract(+Level)
+%     - multifile(+Bool)
+%     - discontiguous(+Bool)
+%     - thread(+Mode)
+%     - volatile(+Bool)
+
+dynamic(M:Predicates, Options) :-
+    '$must_be'(list, Predicates),
+    options_properties(Options, Props),
+    set_pprops(Predicates, M, [dynamic|Props]).
+
+set_pprops([], _, _).
+set_pprops([H|T], M, Props) :-
+    set_pprops1(Props, M:H),
+    strip_module(M:H, M2, P),
+    '$pi_head'(M2:P, Pred),
+    (   '$get_predicate_attribute'(Pred, incremental, 1)
+    ->  '$wrap_incremental'(Pred)
+    ;   '$unwrap_incremental'(Pred)
+    ),
+    set_pprops(T, M, Props).
+
+set_pprops1([], _).
+set_pprops1([H|T], P) :-
+    (   atom(H)
+    ->  '$set_predicate_attribute'(P, H, true)
+    ;   H =.. [Name,Value]
+    ->  '$set_predicate_attribute'(P, Name, Value)
+    ),
+    set_pprops1(T, P).
+
+options_properties(Options, Props) :-
+    G = opt_prop(_,_,_,_),
+    findall(G, G, Spec),
+    options_properties(Spec, Options, Props).
+
+options_properties([], _, []).
+options_properties([opt_prop(Name, Type, SetValue, Prop)|T],
+                   Options, [Prop|PT]) :-
+    Opt =.. [Name,V],
+    '$option'(Opt, Options),
+    '$must_be'(Type, V),
+    V = SetValue,
+    !,
+    options_properties(T, Options, PT).
+options_properties([_|T], Options, PT) :-
+    options_properties(T, Options, PT).
+
+opt_prop(incremental,   boolean,               Bool,  incremental(Bool)).
+opt_prop(abstract,      between(0,0),          0,     abstract).
+opt_prop(multifile,     boolean,               true,  multifile).
+opt_prop(discontiguous, boolean,               true,  discontiguous).
+opt_prop(volatile,      boolean,               true,  volatile).
+opt_prop(thread,        oneof(atom, [local,shared],[local,shared]),
+                                               local, thread_local).
 
 
                  /*******************************
@@ -1176,6 +1159,8 @@ current_trie(Trie) :-
 %     Number of bytes needed to store the trie.
 %     - hashed(Count)
 %     Number of hashed nodes.
+%     - compiled_size(Bytes)
+%     Size of the compiled representation (if the trie is compiled)
 
 trie_property(Trie, Property) :-
     current_trie(Trie),
@@ -1186,7 +1171,12 @@ trie_property(node_count(_)).
 trie_property(value_count(_)).
 trie_property(size(_)).
 trie_property(hashed(_)).
-
+trie_property(compiled_size(_)).
+                                                % below only when -DO_TRIE_STATS
+trie_property(lookup_count(_)).                 % is enabled in pl-trie.h
+trie_property(gen_call_count(_)).
+trie_property(invalidated(_)).
+trie_property(reevaluated(_)).
 
 
                 /********************************
@@ -1435,7 +1425,7 @@ thread_join(Id) :-
     thread_join(Id, Status),
     (   Status == true
     ->  true
-    ;   throw(error(thread_error(Status), _))
+    ;   throw(error(thread_error(Id, Status), _))
     ).
 
 %!  set_prolog_gc_thread(+Status)
@@ -1482,21 +1472,21 @@ set_prolog_gc_thread(stop) :-
 set_prolog_gc_thread(Status) :-
     '$domain_error'(gc_thread, Status).
 
-%!  '$wrap_predicate'(:Head, +Name, -Wrapped, +Body) is det.
+%!  '$wrap_predicate'(:Head, +Name, -Closure, -Wrapped, +Body) is det.
 %
 %   Would be nicer to have this   from library(prolog_wrap), but we need
 %   it for tabling, so it must be a system predicate.
 
 :- meta_predicate
-    '$wrap_predicate'(:, +, -, +).
+    '$wrap_predicate'(:, +, -, -, +).
 
-'$wrap_predicate'(M:Head, WName, call(Wrapped), Body) :-
+'$wrap_predicate'(M:Head, WName, Closure, call(Wrapped), Body) :-
     callable_name_arguments(Head, PName, Args),
     distinct_vars(Args, Head, Arity),
-    atomic_list_concat(['__wrap$', PName], WrapName),
+    atomic_list_concat(['$wrap$', PName], WrapName),
     volatile(M:WrapName/Arity),
     WHead =.. [WrapName|Args],
-    '$c_wrap_predicate'(M:Head, WName, Wrapped, M:(WHead :- Body)).
+    '$c_wrap_predicate'(M:Head, WName, Closure, Wrapped, M:(WHead :- Body)).
 
 distinct_vars(Vars, _, Arity) :-
     all_vars(Vars),

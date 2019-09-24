@@ -658,7 +658,9 @@ save_predicate(P, SaveClass) :-
     P = (M:H),
     functor(H, F, A),
     feedback('~nsaving ~w/~d ', [F, A]),
-    (   H = resource(_,_,_),
+    (   (   H = resource(_,_)
+        ;   H = resource(_,_,_)
+        ),
         SaveClass \== development
     ->  save_attribute(P, (dynamic)),
         (   M == user
@@ -1007,7 +1009,17 @@ arch_find_shlib(Arch, FileSpec, File) :-
                        [ file_type(executable),
                          access(read),
                          file_errors(fail)
-                       ], File).
+                       ], File),
+    !.
+arch_find_shlib(Arch, foreign(Base), File) :-
+    current_prolog_flag(arch, Arch),
+    current_prolog_flag(windows, true),
+    current_prolog_flag(executable, WinExe),
+    prolog_to_os_filename(Exe, WinExe),
+    file_directory_name(Exe, BinDir),
+    file_name_extension(Base, dll, DllFile),
+    atomic_list_concat([BinDir, /, DllFile], File),
+    exists_file(File).
 
 
                  /*******************************

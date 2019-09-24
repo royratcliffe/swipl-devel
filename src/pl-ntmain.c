@@ -37,7 +37,7 @@
 #define _UNICODE 1
 #define UNICODE 1
 
-#ifdef __MINGW32__
+#ifdef __WINDOWS__
 #include <winsock2.h>
 #include <windows.h>
 #endif
@@ -817,8 +817,8 @@ HiddenFrameClass()
   HINSTANCE instance = rlc_hinstance();
 
   if ( !winclassname[0] )
-  { snwprintf(winclassname, sizeof(winclassname)/sizeof(TCHAR),
-	      _T("SWI-Prolog-hidden-win%d"), instance);
+  { _snwprintf(winclassname, sizeof(winclassname)/sizeof(TCHAR),
+	       _T("SWI-Prolog-hidden-win%d"), (int)(intptr_t)instance);
 
     wndClass.style		= 0;
     wndClass.lpfnWndProc	= (LPVOID) pl_wnd_proc;
@@ -872,6 +872,7 @@ capture them in the application and tell   Prolog to print the stack and
 abort.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+#if !defined(O_DEBUG) && !defined(_DEBUG)
 static void
 exit_immediately(rlc_console c, int sig)
 { _exit(1);
@@ -889,11 +890,11 @@ fatalSignal(int sig)
   }
 }
 
-
 static void
 initSignals()
 { signal(SIGABRT, fatalSignal);
 }
+#endif
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -990,12 +991,64 @@ set_window_title(rlc_console c)
     *o++ = *s++;
   *o = 0;
 
-  snwprintf(title, sizeof(title)/sizeof(TCHAR),
-	    _T("SWI-Prolog (%s%sversion %d.%d.%d%s%s)"),
-	    w64, mt, major, minor, patch,
-	    wtag[0] ? _T("-") : _T(""), wtag);
+  _snwprintf(title, sizeof(title)/sizeof(TCHAR),
+	     _T("SWI-Prolog (%s%sversion %d.%d.%d%s%s)"),
+	     w64, mt, major, minor, patch,
+	     wtag[0] ? _T("-") : _T(""), wtag);
 
   rlc_title(c, title, NULL, 0);
+}
+
+
+static int
+get_color_component(term_t rgb, int component, int *color)
+{ term_t a;
+
+  if ( (a = PL_new_term_ref()) &&
+       PL_get_arg(component, rgb, a) &&
+       PL_get_integer_ex(a, color) )
+  { if ( *color < 0 || *color > 255 )
+      return PL_domain_error("rgb_value", a);
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+static foreign_t
+win_window_color(term_t which, term_t color)
+{ char *s;
+  int r, g, b;
+  static functor_t FUNCTOR_rgb3 = 0;
+  int wcolor;
+
+  if ( !FUNCTOR_rgb3 )
+    FUNCTOR_rgb3 = PL_new_functor(PL_new_atom("rgb"), 3);
+
+  if ( !PL_get_chars(which, &s, CVT_ATOM|CVT_STRING|CVT_EXCEPTION) )
+    return FALSE;
+  if ( strcmp(s, "foreground") == 0 )
+    wcolor = RLC_TEXT;
+  else if ( strcmp(s, "background") == 0 )
+    wcolor = RLC_WINDOW;
+  else if ( strcmp(s, "selection_foreground") == 0 )
+    wcolor = RLC_HIGHLIGHTTEXT;
+  else if ( strcmp(s, "selection_background") == 0 )
+    wcolor = RLC_HIGHLIGHT;
+  else
+    return PL_domain_error("window_color", which);
+
+  if ( PL_is_functor(color, FUNCTOR_rgb3) &&
+       get_color_component(color, 1, &r) &&
+       get_color_component(color, 2, &g) &&
+       get_color_component(color, 3, &b) )
+  { rlc_color(PL_current_console(), wcolor, RGB(r,g,b));
+    return TRUE;
+  } else
+  { return PL_type_error("rgb", color);
+  }
+
+  return FALSE;
 }
 
 
@@ -1007,6 +1060,7 @@ PL_extension extensions[] =
   { "$win_insert_menu_item", 3, pl_win_insert_menu_item, 0 },
   { "win_insert_menu",       2, pl_win_insert_menu,      0 },
   { "win_window_pos",        1, pl_window_pos,           0 },
+  { "win_window_color",      2, win_window_color,        0 },
   { NULL,                    0, NULL,                    0 }
 };
 

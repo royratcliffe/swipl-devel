@@ -70,10 +70,12 @@ typedef struct
     code virgin[3];			/* S_VIRGIN */
     code undef[3];			/* S_UNDEF */
     code dynamic[3];			/* S_DYNAMIC */
+    code incr_dynamic[3];		/* S_INCR_DYNAMIC */
     code thread_local[3];		/* S_THREAD_LOCAL */
     code multifile[3];			/* S_MULTIFILE */
     code staticp[3];			/* S_STATIC */
     code wrapper[3];			/* S_WRAP */
+    code trie_gen[3];			/* S_TRIE_GEN */
   } supervisors;
 } PL_code_data_t;
 
@@ -175,6 +177,20 @@ struct PL_global_data
   { Table	modules;		/* atom --> module */
   } tables;
 
+#if O_PLMT
+  struct				/* Shared table data */
+  { struct trie *variant_table;		/* Variant --> table */
+    trie_allocation_pool node_pool;	/* Node allocation pool for tries */
+    simpleMutex  mutex;			/* Sync completion */
+#ifdef __WINDOWS__
+    CONDITION_VARIABLE cvar;
+#else
+    pthread_cond_t cvar;
+#endif
+    struct trie_array *waiting;		/* thread --> trie we are waiting for */
+  } tabling;
+#endif
+
   struct
   { Table	record_lists;		/* Available record lists */
   } recorded_db;
@@ -255,6 +271,19 @@ struct PL_global_data
   } exceptions;
 
   struct
+  { struct
+    { struct event_list *onabort;	/* Thread aborted */
+      struct event_list *onerase;	/* erased clause or dbref */
+      struct event_list *onbreak;	/* breakpoint change */
+      struct event_list *onframefinish; /* Debugged frame finished */
+#ifdef O_PLMT
+      struct event_list *onthreadexit;	/* thread exit hook */
+#endif
+      struct event_list *onuntable;	/* Untable after reload */
+    } hook;
+  } event;
+
+  struct
   { Table		tmp_files;	/* Known temporary files */
     CanonicalDir	_canonical_dirlist;
     char *		myhome;		/* expansion of ~ */
@@ -279,7 +308,6 @@ struct PL_global_data
     Procedure	is2;			/* is/2 */
     Procedure	strict_equal2;		/* ==/2 */
     Procedure	not_strict_equal2;	/* \==/2 */
-    Procedure	event_hook1;
     Procedure	exception_hook4;
     Procedure	print_message2;
     Procedure	foreign_registered2;	/* $foreign_registered/2 */
@@ -299,6 +327,8 @@ struct PL_global_data
 #endif
     Procedure   comment_hook3;		/* prolog:comment_hook/3 */
     Procedure	tune_gc3;		/* prolog:tune_gc */
+    Procedure	trie_gen_compiled2;
+    Procedure	trie_gen_compiled3;
 
     int		static_dirty;		/* #static dirty procedures */
 #ifdef O_CLAUSEGC
@@ -340,8 +370,7 @@ struct PL_global_data
 
 #ifdef O_PLMT
   struct
-  { struct _at_exit_goal *exit_goals;	/* Global thread_at_exit/1 goals */
-    int			enabled;	/* threads are enabled */
+  { int			enabled;	/* threads are enabled */
     Table		mutexTable;	/* Name --> mutex table */
     int			mutex_next_id;	/* next id for anonymous mutexes */
 #ifdef __WINDOWS__
@@ -533,6 +562,12 @@ struct PL_local_data
   struct
   { Buffer	buffered;		/* Buffered events */
     int		delay_nesting;		/* How deeply is delay nested? */
+
+#ifdef O_PLMT
+    struct
+    { struct event_list *onthreadexit;	/* thread exit hook */
+    } hook;
+#endif
   } event;
 
   struct
@@ -563,6 +598,7 @@ struct PL_local_data
     int	has_scheduling_component;	/* A leader was created */
     int in_answer_completion;		/* Running answer completion */
     term_t delay_list;			/* Global delay list */
+    term_t idg_current;			/* Current node in IDG (trie symbol) */
   } tabling;
 
   struct
@@ -647,7 +683,6 @@ struct PL_local_data
     message_queue messages;		/* Message queue */
     struct _thread_sig   *sig_head;	/* Head of signal queue */
     struct _thread_sig   *sig_tail;	/* Tail of signal queue */
-    struct _at_exit_goal *exit_goals;	/* thread_at_exit/1 goals */
     DefinitionChain local_definitions;	/* P_THREAD_LOCAL predicates */
     simpleMutex scan_lock;		/* Hold for asynchronous scans */
   } thread;

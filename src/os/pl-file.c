@@ -48,7 +48,6 @@ handling times must be cleaned, but that not only holds for this module.
 /*#define O_DEBUG_MT 1*/
 
 #ifdef __WINDOWS__
-#define _WIN32_WINNT 0x0600		/* Vista */
 #include <winsock2.h>
 #include <windows.h>
 #endif
@@ -1672,6 +1671,33 @@ getSingleChar(IOSTREAM *stream, int signals)
   Sunlock(stream);
 
   return c;
+}
+
+
+static
+PRED_IMPL("with_tty_raw", 1, with_tty_raw, PL_FA_TRANSPARENT)
+{ PRED_LD
+  int rval;
+  ttybuf buf;
+  int save;
+  IOSTREAM *stream = getStream(Suser_input);
+
+  if ( !stream )
+    return symbol_no_stream(ATOM_user_input);
+  save = true(Sinput, SIO_ISATTY);
+
+  Slock(stream);
+  Sflush(stream);
+  if ( save )
+    PushTty(stream, &buf, TTY_RAW);
+
+  rval = callProlog(NULL, A1, PL_Q_PASS_EXCEPTION, NULL);
+
+  if ( save )
+    PopTty(stream, &buf, TRUE);
+  Sunlock(stream);
+
+  return rval;
 }
 
 
@@ -5761,4 +5787,5 @@ BeginPredDefs(file)
   PRED_DEF("$pop_input_context", 0, pop_input_context, 0)
   PRED_DEF("$input_context", 1, input_context, 0)
   PRED_DEF("$size_stream", 2, size_stream, 0)
+  PRED_DEF("with_tty_raw", 1, with_tty_raw, PL_FA_TRANSPARENT)
 EndPredDefs

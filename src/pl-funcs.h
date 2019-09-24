@@ -297,6 +297,7 @@ COMMON(void)		cleanupCodeToAtom(void);
 COMMON(void)		PL_clear_foreign_exception(LocalFrame fr);
 COMMON(except_class)    classify_exception__LD(term_t ex ARG_LD);
 COMMON(except_class)    classify_exception_p__LD(Word p ARG_LD);
+COMMON(void)		PL_abort_process(void) NORETURN;
 
 /* pl-fmt.c */
 COMMON(word)		pl_format_predicate(term_t chr, term_t descr);
@@ -326,8 +327,8 @@ COMMON(int)		shiftTightStacks(void);
 COMMON(int)		growStacks(size_t l, size_t g, size_t t);
 COMMON(size_t)		nextStackSize(Stack s, size_t minfree);
 COMMON(int)		makeMoreStackSpace(int overflow, int flags);
-COMMON(int)		ensureGlobalSpace(size_t cells, int flags);
-COMMON(int)		ensureTrailSpace(size_t cells);
+COMMON(int)		f_ensureStackSpace__LD(size_t gcells, size_t tcells,
+					       int flags ARG_LD);
 COMMON(int)		growLocalSpace__LD(size_t bytes, int flags ARG_LD);
 COMMON(void)		clearUninitialisedVarsFrame(LocalFrame, Code);
 COMMON(void)		clearLocalVariablesFrame(LocalFrame fr);
@@ -430,7 +431,6 @@ COMMON(intptr_t)	skip_list(Word l, Word *tailp ARG_LD);
 COMMON(intptr_t)	lengthList(term_t list, int errors);
 COMMON(int)		is_acyclic(Word p ARG_LD);
 COMMON(intptr_t)	numberVars(term_t t, nv_options *opts, intptr_t n ARG_LD);
-COMMON(ssize_t)		term_var_skeleton(term_t t, term_t vs ARG_LD);
 COMMON(int)		duplicate_term(term_t in, term_t copy ARG_LD);
 COMMON(word)		stringToList(char *s);
 COMMON(foreign_t)	pl_sub_atom(term_t atom,
@@ -505,6 +505,8 @@ COMMON(foreign_t)	pl_current_predicate1(term_t spec, control_t ctx);
 COMMON(void)		clear_meta_declaration(Definition def);
 COMMON(void)		setMetapredicateMask(Definition def, arg_info *args);
 COMMON(int)		isTransparentMetamask(Definition def, arg_info *args);
+COMMON(ClauseRef)	assertDefinition(Definition def, Clause clause,
+					 ClauseRef where ARG_LD);
 COMMON(ClauseRef)	assertProcedure(Procedure proc, Clause clause,
 					ClauseRef where ARG_LD);
 COMMON(bool)		abolishProcedure(Procedure proc, Module module);
@@ -512,6 +514,8 @@ COMMON(bool)		retractClauseDefinition(Definition def, Clause clause);
 COMMON(void)		unallocClause(Clause c);
 COMMON(void)		freeClause(Clause c);
 COMMON(void)		lingerClauseRef(ClauseRef c);
+COMMON(void)		acquire_clause(Clause cl);
+COMMON(void)		release_clause(Clause cl);
 COMMON(ClauseRef)	newClauseRef(Clause cl, word key);
 COMMON(size_t)		removeClausesPredicate(Definition def,
 					       int sfindex, int fromfile);
@@ -524,11 +528,9 @@ COMMON(word)		pl_retractall(term_t head);
 COMMON(word)		pl_abolish(term_t atom, term_t arity);
 COMMON(word)		pl_abolish1(term_t pred);
 COMMON(word)		pl_get_predicate_attribute(term_t pred, term_t k, term_t v);
-COMMON(word)		pl_set_predicate_attribute(term_t pred, term_t k, term_t v);
 COMMON(int)		redefineProcedure(Procedure proc, SourceFile sf,
 					  unsigned int suppress);
 COMMON(word)		pl_index(term_t pred);
-COMMON(word)		pl_default_predicate(term_t d1, term_t d2);
 COMMON(Definition)	autoImport(functor_t f, Module m);
 COMMON(word)		pl_require(term_t pred);
 COMMON(word)		pl_check_definition(term_t spec);
@@ -664,11 +666,7 @@ COMMON(word)		pl_leash(term_t old, term_t new);
 COMMON(word)		pl_visible(term_t old, term_t new);
 COMMON(word)		pl_debuglevel(term_t old, term_t new);
 COMMON(word)		pl_prolog_current_frame(term_t fr);
-COMMON(int)		PL_call_event_hook(pl_event_type ev, ...) WUNUSED;
-COMMON(int)		PL_call_event_hook_va(pl_event_type ev, va_list args);
-COMMON(int)		delayEvents(void);
-COMMON(int)		sendDelayedEvents(int noerror) WUNUSED;
-COMMON(void)		PL_put_frame(term_t t, LocalFrame fr);
+COMMON(int)		PL_put_frame(term_t t, LocalFrame fr);
 COMMON(void)		PL_put_choice(term_t t, Choice ch);
 
 /* pl-util.c */

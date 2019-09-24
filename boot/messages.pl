@@ -144,8 +144,8 @@ iso_message(permission_error(Action, Type, Object)) -->
 iso_message(evaluation_error(Which)) -->
     [ 'Arithmetic: evaluation error: `~p'''-[Which] ].
 iso_message(existence_error(procedure, Proc)) -->
-    [ 'Undefined procedure: ~q'-[Proc] ],
-    undefined_proc_msg(Proc).
+    [ 'Unknown procedure: ~q'-[Proc] ],
+    unknown_proc_msg(Proc).
 iso_message(existence_error(answer_variable, Var)) -->
     [ '$~w was not bound by a previous query'-[Var] ].
 iso_message(existence_error(Type, Object)) -->
@@ -196,29 +196,31 @@ permission_error(output, binary_stream, Stream) -->
     [ 'No permission to write characters to binary stream `~p'''-[Stream] ].
 permission_error(open, source_sink, alias(Alias)) -->
     [ 'No permission to reuse alias "~p": already taken'-[Alias] ].
+permission_error(tnot, non_tabled_procedure, Pred) -->
+    [ 'The argument of tnot/1 is not tabled: ~p'-[Pred] ].
 permission_error(Action, Type, Object) -->
     [ 'No permission to ~w ~w `~p'''-[Action, Type, Object] ].
 
 
-undefined_proc_msg(_:(^)/2) -->
+unknown_proc_msg(_:(^)/2) -->
     !,
-    undefined_proc_msg((^)/2).
-undefined_proc_msg((^)/2) -->
+    unknown_proc_msg((^)/2).
+unknown_proc_msg((^)/2) -->
     !,
     [nl, '  ^/2 can only appear as the 2nd argument of setof/3 and bagof/3'].
-undefined_proc_msg((:-)/2) -->
+unknown_proc_msg((:-)/2) -->
     !,
     [nl, '  Rules must be loaded from a file'],
     faq('ToplevelMode').
-undefined_proc_msg((:-)/1) -->
+unknown_proc_msg((:-)/1) -->
     !,
     [nl, '  Directives must be loaded from a file'],
     faq('ToplevelMode').
-undefined_proc_msg((?-)/1) -->
+unknown_proc_msg((?-)/1) -->
     !,
     [nl, '  ?- is the Prolog prompt'],
     faq('ToplevelMode').
-undefined_proc_msg(Proc) -->
+unknown_proc_msg(Proc) -->
     { dwim_predicates(Proc, Dwims) },
     (   {Dwims \== []}
     ->  [nl, '  However, there are definitions for:', nl],
@@ -292,7 +294,7 @@ syntax_error(cannot_start_term) -->
 syntax_error(punct(Punct, End)) -->
     [ 'Unexpected `~w\' before `~w\''-[Punct, End] ].
 syntax_error(undefined_char_escape(C)) -->
-    [ 'Undefined character escape in quoted atom or string: `\\~w\''-[C] ].
+    [ 'Unknown character escape in quoted atom or string: `\\~w\''-[C] ].
 syntax_error(void_not_allowed) -->
     [ 'Empty argument list "()"' ].
 syntax_error(Message) -->
@@ -336,6 +338,13 @@ dwim_message([Head|T]) -->
 
 swi_message(io_error(Op, Stream)) -->
     [ 'I/O error in ~w on stream ~p'-[Op, Stream] ].
+swi_message(thread_error(TID, false)) -->
+    [ 'Thread ~p died due to failure:'-[TID] ].
+swi_message(thread_error(TID, exception(Error))) -->
+    [ 'Thread ~p died abnormally:'-[TID], nl ],
+    translate_message(Error).
+swi_message(idg_dependency_error(Shared, Private)) -->
+    [ 'Shared table for ~p may not depend on private ~p'-[Shared, Private] ].
 swi_message(shell(execute, Cmd)) -->
     [ 'Could not execute `~w'''-[Cmd] ].
 swi_message(shell(signal(Sig), Cmd)) -->
@@ -576,6 +585,8 @@ prolog_message(unknown_in_module_user) -->
     ].
 prolog_message(deprecated(What)) -->
     deprecated(What).
+prolog_message(untable(PI)) -->
+    [ 'Reconsult: removed tabling for ~p'-[PI] ].
 
 
                  /*******************************
@@ -645,7 +656,7 @@ prolog_message(load_file(done(Level, File, Action, Module, Time, Clauses))) -->
 prolog_message(dwim_undefined(Goal, Alternatives)) -->
     { goal_to_predicate_indicator(Goal, Pred)
     },
-    [ 'Undefined procedure: ~q'-[Pred], nl,
+    [ 'Unknown procedure: ~q'-[Pred], nl,
       '    However, there are definitions for:', nl
     ],
     dwim_message(Alternatives).
@@ -668,6 +679,10 @@ prolog_message(qlf(recompile(Spec,_Pl,_Qlf,Reason))) -->
 prolog_message(qlf(can_not_recompile(Spec,QlfFile,_Reason))) -->
     [ '~p: can not recompile "~w" (access denied)'-[Spec, QlfFile], nl,
       '\tLoading from source'-[]
+    ].
+prolog_message(qlf(system_lib_out_of_date(Spec,QlfFile))) -->
+    [ '~p: can not recompile "~w" (access denied)'-[Spec, QlfFile], nl,
+      '\tLoading QlfFile'-[]
     ].
 prolog_message(redefine_module(Module, OldFile, File)) -->
     [ 'Module "~q" already loaded from ~w.'-[Module, OldFile], nl,
@@ -733,18 +748,18 @@ hidden_module(M) :-
     sub_atom(M, 0, _, _, $).
 
 current_definition(Proc, Prefix) -->
-    { pi_head(Proc, Head),
+    { pi_uhead(Proc, Head),
       predicate_property(Head, file(File)),
       predicate_property(Head, line_count(Line))
     },
-    [ '~w'-[Prefix], '~w:~d'-[File,Line], nl ].
+    [ '~w~w:~d'-[Prefix,File,Line], nl ].
 current_definition(_, _) --> [].
 
-pi_head(Module:Name/Arity, Module:Head) :-
+pi_uhead(Module:Name/Arity, Module:Head) :-
     !,
     atom(Module), atom(Name), integer(Arity),
     functor(Head, Name, Arity).
-pi_head(Name/Arity, user:Head) :-
+pi_uhead(Name/Arity, user:Head) :-
     atom(Name), integer(Arity),
     functor(Head, Name, Arity).
 
@@ -1075,11 +1090,11 @@ prolog_message(query(QueryResult)) -->
     query_result(QueryResult).
 
 query_result(no) -->            % failure
-    [ ansi([bold,fg(red)], 'false.', []) ],
+    [ ansi(truth(false), 'false.', []) ],
     extra_line.
 query_result(yes(true, [])) -->      % prompt_alternatives_on: groundness
     !,
-    [ ansi(bold, 'true.', []) ],
+    [ ansi(truth(true), 'true.', []) ],
     extra_line.
 query_result(yes(Delays, Residuals)) -->
     result([], Delays, Residuals),
@@ -1118,7 +1133,7 @@ prompt(Answer, _, _, _) -->
 
 prompt(yes, empty) -->
     !,
-    [ ansi(bold, 'true.', []) ],
+    [ ansi(truth(true), 'true.', []) ],
     extra_line.
 prompt(yes, _) -->
     !,
@@ -1126,7 +1141,7 @@ prompt(yes, _) -->
     extra_line.
 prompt(more, empty) -->
     !,
-    [ ansi(bold, 'true ', []), flush ].
+    [ ansi(truth(true), 'true ', []), flush ].
 prompt(more, _) -->
     !,
     [ ' '-[], flush ].
@@ -1180,7 +1195,7 @@ value(Name, Skel, Subst, Options) -->
 
 substitution([], _) --> !.
 substitution([N=V|T], Options) -->
-    [ ', ', ansi(fg(green), '% where', []), nl,
+    [ ', ', ansi(comment, '% where', []), nl,
       '    ~w = ~W'-[N,V,Options] ],
     substitutions(T, Options).
 
@@ -1195,7 +1210,7 @@ residuals(Normal-Hidden, Options) -->
     bind_res_sep(Normal, Hidden),
     (   {Hidden == []}
     ->  []
-    ;   [ansi(fg(green), '% with pending residual goals', []), nl]
+    ;   [ansi(comment, '% with pending residual goals', []), nl]
     ),
     residuals1(Hidden, Options).
 
@@ -1212,17 +1227,17 @@ wfs_residual_program(true, _Options) -->
     !.
 wfs_residual_program(Goal, _Options) -->
     { current_prolog_flag(toplevel_list_wfs_residual_program, true),
-      !,
       '$current_typein_module'(TypeIn),
       (   current_predicate(delays_residual_program/2)
       ->  true
       ;   use_module(library(wfs), [delays_residual_program/2])
       ),
-      delays_residual_program(TypeIn:Goal, TypeIn:Program)
+      delays_residual_program(TypeIn:Goal, TypeIn:Program),
+      Program \== []
     },
     !,
-    [ ansi(fg(green), '% WFS residual program', []), nl ],
-    [ ansi(fg(cyan), '~@', ['$messages':list_clauses(Program)]) ].
+    [ ansi(comment, '% WFS residual program', []), nl ],
+    [ ansi(wfs(residual_program), '~@', ['$messages':list_clauses(Program)]) ].
 wfs_residual_program(_, _) --> [].
 
 delays(true, _Options) -->
@@ -1231,9 +1246,9 @@ delays(Goal, Options) -->
     { current_prolog_flag(toplevel_list_wfs_residual_program, true)
     },
     !,
-    [ ansi([bold], '~W', [Goal, Options]) ].
+    [ ansi(truth(undefined), '~W', [Goal, Options]) ].
 delays(_, _Options) -->
-    [ ansi([bold,fg(cyan)], unknown, []) ].
+    [ ansi(truth(undefined), undefined, []) ].
 
 :- public list_clauses/1.
 
@@ -1373,20 +1388,18 @@ prolog_message(frame(Frame, backtrace, _PC)) -->
     !,
     { prolog_frame_attribute(Frame, level, Level)
     },
-    [ ansi(bold, '~t[~D] ~10|', [Level]) ],
+    [ ansi(frame(level), '~t[~D] ~10|', [Level]) ],
     frame_context(Frame),
     frame_goal(Frame).
 prolog_message(frame(Frame, choice, PC)) -->
     !,
     prolog_message(frame(Frame, backtrace, PC)).
 prolog_message(frame(_, cut_call, _)) --> !, [].
-prolog_message(frame(Frame, trace(Port), _PC)) -->
+prolog_message(frame(Goal, trace(Port))) -->
     !,
     [ ' T ' ],
     port(Port),
-    frame_level(Frame),
-    frame_context(Frame),
-    frame_goal(Frame).
+    goal(Goal).
 prolog_message(frame(Frame, Port, _PC)) -->
     frame_flags(Frame),
     port(Port),
@@ -1397,8 +1410,12 @@ prolog_message(frame(Frame, Port, _PC)) -->
     [ flush ].
 
 frame_goal(Frame) -->
-    { prolog_frame_attribute(Frame, goal, Goal0),
-      clean_goal(Goal0, Goal),
+    { prolog_frame_attribute(Frame, goal, Goal)
+    },
+    goal(Goal).
+
+goal(Goal0) -->
+    { clean_goal(Goal0, Goal),
       current_prolog_flag(debugger_write_options, Options)
     },
     [ '~W'-[Goal, Options] ].
@@ -1438,17 +1455,17 @@ frame_flags(Frame) -->
     [ '~w~w '-[T, S] ].
 
 port(Port) -->
-    { port_name(Port, Colour, Name)
+    { port_name(Port, Name)
     },
     !,
-    [ ansi([bold,fg(Colour)], '~w: ', [Name]) ].
+    [ ansi(port(Port), '~w: ', [Name]) ].
 
-port_name(call,      green,   'Call').
-port_name(exit,      green,   'Exit').
-port_name(fail,      red,     'Fail').
-port_name(redo,      yellow,  'Redo').
-port_name(unify,     blue,    'Unify').
-port_name(exception, magenta, 'Exception').
+port_name(call,      'Call').
+port_name(exit,      'Exit').
+port_name(fail,      'Fail').
+port_name(redo,      'Redo').
+port_name(unify,     'Unify').
+port_name(exception, 'Exception').
 
 clean_goal(M:Goal, Goal) :-
     hidden_module(M),
@@ -1507,11 +1524,6 @@ prolog_message(invalid_tmp_dir(Dir, Reason)) -->
 prolog_message(ambiguous_stream_pair(Pair)) -->
     [ 'Ambiguous operation on stream pair ~p'-[Pair] ].
 
-env(Name) -->
-    { current_prolog_flag(windows, true) },
-    [ '%~w%'-[Name] ].
-env(Name) -->
-    [ '$~w'-[Name] ].
 
 		 /*******************************
 		 *          DEPRECATED		*
@@ -1521,6 +1533,35 @@ deprecated(set_prolog_stack(_Stack,limit)) -->
     [ 'set_prolog_stack/2: limit(Size) sets the combined limit.'-[], nl,
       'See http://www.swi-prolog.org/changes/stack-limit.html'
     ].
+
+		 /*******************************
+		 *        DEFAULT THEME		*
+		 *******************************/
+
+:- public default_theme/2.
+
+default_theme(var,                    [fg(red)]).
+default_theme(code,                   [fg(blue)]).
+default_theme(comment,                [fg(green)]).
+default_theme(warning,                [fg(red)]).
+default_theme(error,                  [bold, fg(red)]).
+default_theme(truth(false),           [bold, fg(red)]).
+default_theme(truth(true),            [bold]).
+default_theme(truth(undefined),       [bold, fg(cyan)]).
+default_theme(wfs(residual_program),  [fg(cyan)]).
+default_theme(frame(level),           [bold]).
+default_theme(port(call),             [bold, fg(green)]).
+default_theme(port(exit),             [bold, fg(green)]).
+default_theme(port(fail),             [bold, fg(red)]).
+default_theme(port(redo),             [bold, fg(yellow)]).
+default_theme(port(unify),            [bold, fg(blue)]).
+default_theme(port(exception),        [bold, fg(magenta)]).
+default_theme(message(informational), [fg(green)]).
+default_theme(message(information),   [fg(green)]).
+default_theme(message(debug(_)),      [fg(blue)]).
+default_theme(message(Level),         Attrs) :-
+    nonvar(Level),
+    default_theme(Level, Attrs).
 
 
                  /*******************************

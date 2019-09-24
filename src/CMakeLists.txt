@@ -81,7 +81,7 @@ set(SRC_CORE pl-atom.c pl-wam.c pl-arith.c pl-bag.c pl-error.c
     pl-dbref.c pl-termhash.c pl-variant.c pl-assert.c
     pl-copyterm.c pl-debug.c pl-cont.c pl-ressymbol.c pl-dict.c
     pl-trie.c pl-indirect.c pl-tabling.c pl-rsort.c pl-mutex.c
-    pl-wrap.c)
+    pl-wrap.c pl-event.c)
 
 set(LIBSWIPL_SRC
     ${SRC_CORE}
@@ -110,7 +110,7 @@ set(SWIPL_DATA_DIRS
     library/dialect library/dialect/swi library/dialect/eclipse
     library/dialect/hprolog library/dialect/sicstus library/dialect/iso
     library/dialect/yap library/dialect/xsb
-    library/unicode library/lynx
+    library/unicode library/lynx library/theme
     demo)
 
 set(SWIPL_DATA_boot init.pl syspred.pl toplevel.pl license.pl bags.pl apply.pl
@@ -145,7 +145,7 @@ set(SWIPL_DATA_library explain.pl sort.pl prolog_config.pl
     sandbox.pl prolog_format.pl prolog_install.pl check_installation.pl
     solution_sequences.pl iostream.pl dicts.pl yall.pl tabling.pl
     lazy_lists.pl prolog_jiti.pl zip.pl obfuscate.pl wfs.pl
-    prolog_wrap.pl)
+    prolog_wrap.pl prolog_trace.pl prolog_code.pl)
 if(INSTALL_DOCUMENTATION)
   set(SWIPL_DATA_library ${SWIPL_DATA_library} help.pl)
 endif()
@@ -161,6 +161,8 @@ endif()
 
 set(SWIPL_DATA_library_lynx format.pl html_style.pl html_text.pl
     pldoc_style.pl)
+
+set(SWIPL_DATA_library_theme auto.pl dark.pl)
 
 set(SWIPL_DATA_library_clp bounds.pl clp_events.pl clp_distinct.pl
     simplex.pl clpfd.pl clpb.pl)
@@ -180,7 +182,8 @@ set(SWIPL_DATA_library_dialect_sicstus arrays.pl block.pl lists.pl
 set(SWIPL_DATA_library_dialect_iso iso_predicates.pl)
 set(SWIPL_DATA_library_dialect_yap README.TXT)
 set(SWIPL_DATA_library_dialect_xsb README.md source.pl basics.pl machine.pl
-    storage.pl ordsets.pl intern.pl string.pl tables.pl setof.pl)
+    storage.pl ordsets.pl intern.pl string.pl tables.pl setof.pl consult.pl
+    increval.pl curr_sym.pl error_handler.pl lists.pl timed_call.pl)
 
 set(SWIPL_DATA_demo likes.pl README.md)
 
@@ -295,6 +298,7 @@ config_data_files()
 
 # Set swipl.home above binaries to a relative path to the root
 file(WRITE "${CMAKE_BINARY_DIR}/swipl.home" "home\n")
+file(WRITE "${CMAKE_BINARY_DIR}/src/swipl.home" "../home\n")
 file(WRITE "${CMAKE_BINARY_DIR}/packages/swipl.home" "../home\n")
 symlink(${SWIPL_BOOT_ROOT}/build_home.pl ${CMAKE_BINARY_DIR}/home/swipl.rc)
 symlink(${SWIPL_BOOT_ROOT}/build_home.pl ${CMAKE_BINARY_DIR}/home/swipl-win.rc)
@@ -341,7 +345,8 @@ add_dependencies(libswipl git-version vmi-metadata core-constants)
 set_target_properties(libswipl PROPERTIES
 		      OUTPUT_NAME swipl
 		      VERSION ${SWIPL_VERSION_STRING}
-		      SOVERSION ${SWIPL_VERSION_MAJOR})
+		      SOVERSION ${SWIPL_VERSION_MAJOR}
+		      GNUtoMS ON)
 target_include_directories(libswipl BEFORE PRIVATE
 			   ${CMAKE_CURRENT_BINARY_DIR}
 			   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -444,20 +449,21 @@ endif(0)
 # Testing
 
 add_custom_target(check
-    COMMAND ${PROG_SWIPL} -q -g test -t halt ${CMAKE_CURRENT_SOURCE_DIR}/test.pl)
+    COMMAND ${PROG_SWIPL} -f none -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl)
 
 set(SWIPL_TEST_DIRS unprotected core attvar tabling library charset eclipse clp
-    xsb/basic_tests xsb/ai_tests xsb/ptq xsb/neg_tests xsb/delay_tests xsb/wfs_tests
+    xsb/basic_tests xsb/ai_tests xsb/ptq xsb/neg_tests xsb/delay_tests
+    xsb/wfs_tests xsb/table_tests xsb/incremental_tests xsb/nonmt_tests
     GC save)
 if(MULTI_THREADED)
   set(SWIPL_TEST_DIRS ${SWIPL_TEST_DIRS} thread)
 endif()
 
 add_test(NAME swipl:basic
-	 COMMAND ${PROG_SWIPL} -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl --no-subdirs)
+	 COMMAND ${PROG_SWIPL} -f none -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl --no-subdirs)
 foreach(test ${SWIPL_TEST_DIRS})
   add_test(NAME swipl:${test}
-	   COMMAND ${PROG_SWIPL} -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl --no-core ${test})
+	   COMMAND ${PROG_SWIPL} -f none -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl --no-core ${test})
 endforeach()
 
 if(INSTALL_TESTS)
@@ -471,6 +477,15 @@ endif()
 # Populate parms.h, making the compilation environment known to Prolog
 include(Params)
 configure_file(parms.h.cmake parms.h)
+
+# Provide ninja etags
+file(GLOB_RECURSE etags_sources RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.[ch]")
+add_custom_target(
+    etags
+    etags ${etags_sources}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Create TAGS file for main sources")
+
 
 ################
 # Installation

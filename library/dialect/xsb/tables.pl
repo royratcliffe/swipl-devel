@@ -34,7 +34,11 @@
 
 :- module(tables,
           [ abolish_all_tables/0,
-            abolish_table_pred/1,               % :Callable
+            abolish_module_tables/1,            % +Module
+            abolish_table_pred/1,               % :CallableOrPI
+            abolish_table_call/1,               % :Callable
+            abolish_table_call/2,               % :Callable, +Options
+            abolish_table_subgoals/2,           % :Callable, +Options
 
             tfindall/3,                         % +Template, :Goal, -Answers
             't not'/1,                          % :Goal
@@ -57,6 +61,9 @@
 
 :- meta_predicate
     abolish_table_pred(:),
+    abolish_table_call(:),
+    abolish_table_call(:, +),
+    abolish_table_subgoals(:, +),
     tfindall(+, 0, -),
     't not'(0),
     get_call(:, -, -),
@@ -92,9 +99,12 @@ set_pil_off.
 %   True when Trie is an answer trie for a variant of CallTerm. See also
 %   get_calls/3.
 
-get_call(M:Goal, Trie, Skeleton) :-
-    current_table(M:Goal, Trie),
-    '$tbl_table_status'(Trie, _Status, M:Goal, Skeleton).
+get_call(Goal0, Trie, Skeleton) :-
+    '$tbl_implementation'(Goal0, M:Goal),
+    M:'$table_mode'(Goal, Table, _),
+    current_table(M:Table, Trie),
+    '$tbl_table_status'(Trie, _Status, M:Table, Skeleton).
+
 
 %!  get_calls(:CallTerm, -Trie, -Skeleton) is nondet.
 %
@@ -105,10 +115,12 @@ get_call(M:Goal, Trie, Skeleton) :-
 %   variables in the answer template. The   `ret`  functor is compatible
 %   with XSB.
 
-get_calls(M:Goal, Trie, Skeleton) :-
+get_calls(Goal0, Trie, Skeleton) :-
     '$tbl_variant_table'(VariantTrie),
-    trie_gen(VariantTrie, M:Goal, Trie),
-    '$tbl_table_status'(Trie, _Status, M:Goal, Skeleton).
+    '$tbl_implementation'(Goal0, M:Goal),
+    M:'$table_mode'(Goal, Table, _),
+    trie_gen(VariantTrie, M:Table, Trie),
+    '$tbl_table_status'(Trie, _Status, M:Table, Skeleton).
 
 %!  get_returns(+AnswerTrie, -Return) is nondet.
 %
@@ -179,7 +191,8 @@ semicolon_list(G) -->
 %   disjunction   of   conjunctions.   The     XSB   representation   is
 %   non-deterministic and uses a list to represent the conjunction.
 
-get_residual(Goal, DelayList) :-
+get_residual(Goal0, DelayList) :-
+    '$tbl_implementation'(Goal0, Goal),
     '$tbl_variant_table'(VariantTrie),
     trie_gen(VariantTrie, Goal, Trie),
     '$tbl_table_status'(Trie, _Status, Goal, Skeleton),
@@ -247,9 +260,41 @@ abolish_table_pred(M:Name/Arity) :-
 abolish_table_pred(M:Head) :-
     callable(Head),
     !,
-    abolish_table_subgoals(M:Head).
+    functor(Head, Name, Arity),
+    functor(Generic, Name, Arity),
+    abolish_table_subgoals(M:Generic).
 abolish_table_pred(PI) :-
     type_error(callable_or_predicate_indicator, PI).
 
+%!  abolish_table_call(+Head) is det.
+%!  abolish_table_call(+Head, +Options) is det.
+%
+%   Same as abolish_table_subgoals/1.  See also abolish_table_pred/1.
+%
+%   @deprecated Use abolish_table_subgoals/[1,2].
 
+abolish_table_call(Head) :-
+    abolish_table_subgoals(Head).
 
+abolish_table_call(Head, Options) :-
+    abolish_table_subgoals(Head, Options).
+
+%!  abolish_table_subgoals(:Head, +Options)
+%
+%   Behaves  as  abolish_table_subgoals/1,  but    allows   the  default
+%   `table_gc_action` to be over-ridden with a flag, which can be either
+%   `abolish_tables_transitively` or `abolish_tables_singly`.
+%
+%   @compat Options is compatible with XSB, but does not follow the ISO
+%   option handling conventions.
+
+abolish_table_subgoals(Head, Options) :-
+    must_be(list, Options),
+    (   Options == []
+    ->  abolish_table_subgoals(Head)
+    ;   memberchk(abolish_tables_transitively, Options)
+    ->  abolish_table_subgoals(Head)
+    ;   memberchk(abolish_tables_singly, Options)
+    ->  abolish_table_subgoals(Head)
+    ;   domain_error([abolish_tables_transitively,abolish_tables_singly], Options)
+    ).

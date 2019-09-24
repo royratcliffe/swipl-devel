@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017, University of Amsterdam
-                         VU University Amsterdam
+    Copyright (c)  2017-2019, University of Amsterdam
+                              VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -69,6 +70,11 @@ test(insert_nested, set(Copy == [v(a(x(a)),b(y),c(z))])) :-
 	trie_new(T),
 	trie_insert(T, v(a(x(a)),b(y),c(z)), true),
 	trie_gen(T, Copy, _).
+test(insert_nested2, V == 42) :-
+	trie_new(T),
+	K = user:t([1,2,3,4], [1,2,3,4]),
+	trie_insert(T, K, 42),
+	trie_gen(T, K, V).
 test(insert_nested_get, Copy == v(a(x(a)),b(y),c(z))) :-
 	trie_new(T),
 	trie_insert(T, v(a(x(a)),b(y),c(z)), true, Node),
@@ -120,6 +126,10 @@ test(delete, Keys == [aap,mies]) :-
 	assertion(N==n),
 	findall(K, trie_gen(T, K, _), Keys0),
 	sort(Keys0, Keys).
+test(gen_indirect, true) :-
+	trie_new(T),
+	trie_insert(T, 0.25, true),
+	trie_gen(T, 0.25).
 
 shared_list(N, t(List,N)) :-
 	length(List, N),

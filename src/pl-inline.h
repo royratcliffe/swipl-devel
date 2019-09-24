@@ -86,6 +86,16 @@ MSB64(int64_t i)
 #define MemoryBarrier() (void)0
 #endif
 
+static inline size_t
+__builtin_popcount(size_t sz)
+{
+#if SIZEOF_VOIDP == 4
+  return __popcnt(sz);
+#else
+  return __popcnt64(sz);
+#endif
+}
+
 #endif /*_MSC_VER*/
 
 #if !defined(HAVE_MSB) && defined(HAVE__BUILTIN_CLZ)
@@ -289,7 +299,7 @@ true_bit(bit_vector *v, size_t which)
 static inline size_t
 popcount_bitvector(const bit_vector *v)
 { const bitv_chunk *p = v->chunk;
-  int cnt = (v->size+BITSPERE-1)/BITSPERE;
+  int cnt = (int)(v->size+BITSPERE-1)/BITSPERE;
   size_t bits = 0;
 
   while( cnt-- > 0 )
@@ -385,7 +395,7 @@ Trail__LD(Word p, word v ARG_LD)
 
 static inline void
 bindConst__LD(Word p, word c ARG_LD)
-{ DEBUG(CHK_SECURE, assert(hasGlobalSpace(0)));
+{ DEBUG(0, assert(hasGlobalSpace(0)));
 
 #ifdef O_ATTVAR
   if ( isVar(*p) )
@@ -528,25 +538,6 @@ setGenerationFrame__LD(LocalFrame fr ARG_LD)
 #endif
 }
 
-static inline int WUNUSED
-callEventHook(pl_event_type ev, ...)
-{
-#ifdef O_DEBUGGER
-  if ( PROCEDURE_event_hook1->definition->impl.any.defined )
-  { va_list args;
-    int rc;
-
-    va_start(args, ev);
-    rc = PL_call_event_hook_va(ev, args);
-    va_end(args);
-
-    return rc;
-  }
-#endif
-
-  return TRUE;
-}
-
 static inline int
 ensureLocalSpace__LD(size_t bytes ARG_LD)
 { int rc;
@@ -558,6 +549,17 @@ ensureLocalSpace__LD(size_t bytes ARG_LD)
     return TRUE;
 
   return raiseStackOverflow(rc);
+}
+
+static inline int
+ensureStackSpace__LD(size_t gcells, size_t tcells, int flags ARG_LD)
+{ gcells += BIND_GLOBAL_SPACE;
+  tcells += BIND_TRAIL_SPACE;
+
+  if ( likely(gTop+gcells <= gMax) && likely(tTop+tcells <= tMax) )
+    return TRUE;
+
+  return f_ensureStackSpace__LD(gcells, tcells, flags PASS_LD);
 }
 
 

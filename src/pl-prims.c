@@ -399,10 +399,44 @@ PRED_IMPL("=", 2, unify, 0)
 static
 PRED_IMPL("\\=", 2, not_unify, 0)
 { PRED_LD
-  Word p0 = valTermRef(A1);
-  term_t ex = PL_new_term_ref();
+  Word p1 = valTermRef(A1);
+  Word p2 = p1+1;
+  word w1, w2;
+  term_t ex;
 
-  if ( can_unify(p0, p0+1, ex) )
+  deRef(p1); w1 = *p1;
+  deRef(p2); w2 = *p2;
+
+  if ( isVar(w1) || isVar(w2) )
+  { if ( LD->prolog_flag.occurs_check == OCCURS_CHECK_FALSE )
+      return FALSE;			/* can unify */
+    goto full_check;
+  }
+  if ( w1 == w2 )
+    return FALSE;
+  if ( isAttVar(w1) || isAttVar(w2) )
+    goto full_check;
+  if ( tag(w1) != tag(w2) )
+    return TRUE;
+
+  switch(tag(w1))
+  { case TAG_ATOM:
+      return TRUE;
+    case TAG_INTEGER:
+      if ( storage(w1) == STG_INLINE ||
+	   storage(w2) == STG_INLINE )
+	return TRUE;
+    case TAG_STRING:
+    case TAG_FLOAT:
+      return !equalIndirect(w1, w2);
+    case TAG_COMPOUND:
+      break;
+  }
+
+full_check:
+  ex = PL_new_term_ref();
+
+  if ( can_unify(p1, p2, ex) )
     return FALSE;
   if ( !PL_is_variable(ex) )
     return PL_raise_exception(ex);
@@ -2994,6 +3028,8 @@ term_variables_to_termv(term_t t, term_t *vp, size_t maxcount, int flags ARG_LD)
 	o++;
       }
     }
+    if ( o < i )
+      PL_reset_term_refs(v0+o);
 
     count = o;
   }
@@ -3014,7 +3050,8 @@ term_variables(term_t t, term_t vars, term_t tail, int flags ARG_LD)
   term_t v0;
   size_t i, maxcount, count;
 
-  if ( !(!tail && PL_skip_list(vars, 0, &maxcount) == PL_LIST) )
+  if ( !(!tail && PL_skip_list(vars, 0, &maxcount) == PL_LIST) ||
+       (flags&TV_SINGLETON) )
     maxcount = ~0;
 
   for(;;)
@@ -3045,49 +3082,6 @@ term_variables(term_t t, term_t vars, term_t tail, int flags ARG_LD)
     return PL_unify(list, tail);
   else
     return PL_unify_nil(list);
-}
-
-/** term_var_skeleton(+Term, -Vars)
- * Get a v/n term for the variables in Term
- */
-
-#define VAR_SKEL_FAST 8
-
-ssize_t
-term_var_skeleton(term_t t, term_t vs ARG_LD)
-{ term_t v0;
-  size_t count;
-  functor_t vf;
-  static functor_t fast[VAR_SKEL_FAST] = {0};
-
-  for(;;)
-  { count = term_variables_to_termv(t, &v0, ~(size_t)0, 0 PASS_LD);
-    if ( count == TV_EXCEPTION )
-      return -1;
-    if ( count == TV_NOSPACE )
-    { PL_reset_term_refs(v0);
-      if ( !makeMoreStackSpace(LOCAL_OVERFLOW, ALLOW_SHIFT) )
-	return -1;			/* GC doesn't help */
-      continue;
-    }
-    if ( count == TV_NOMEM )
-    { PL_error(NULL, 0, NULL, ERR_NOMEM);
-      return -1;
-    }
-    break;
-  }
-
-  if ( count < VAR_SKEL_FAST )
-  { if ( !(vf=fast[count]) )
-      fast[count] = vf = PL_new_functor(ATOM_ret, count);
-  } else
-  { vf = PL_new_functor(ATOM_ret, count);
-  }
-
-  if ( !PL_cons_functor_v(vs, vf, v0) )
-    return -1;
-
-  return count;
 }
 
 
@@ -3123,6 +3117,91 @@ PRED_IMPL("term_attvars", 2, term_attvars, 0)
 { PRED_LD
 
   return term_variables(A1, A2, 0, TV_ATTVAR PASS_LD);
+}
+
+
+static int
+is_most_general_term(Word p ARG_LD)
+{ deRef(p);
+
+  if ( isAtom(*p) )
+    return TRUE;
+
+  if ( isTerm(*p) )
+  { Functor t = valueTerm(*p);
+
+    if ( t->definition == FUNCTOR_dot2 )
+    { Word tail;
+
+      (void)skip_list(p, &tail PASS_LD);
+
+      if ( isNil(*tail) )
+      { Word l = p;
+	int rc = TRUE;
+
+	while( isList(*l) )
+	{ Word h = HeadList(l);
+
+	  deRef(h);
+	  if ( !isVar(*h) )
+	  { rc = FALSE;
+	    break;
+	  }
+	  set_marked(h);
+	  l = TailList(l);
+	  deRef(l);
+	}
+	p = l;
+	while( isList(*l) )
+	{ Word h = HeadList(l);
+
+	  deRef(h);
+	  if ( is_marked(h) )
+	  { clear_marked(h);
+	    l = TailList(l);
+	    deRef(l);
+	  } else
+	  { break;
+	  }
+	}
+
+	return rc;
+      }
+    } else
+    { size_t arity = arityFunctor(t->definition);
+      size_t i, j;
+      int rc = TRUE;
+
+      for(i=0; i<arity; i++)
+      { Word a = &t->arguments[i];
+
+	deRef(a);
+	if ( !isVar(*a) )
+	{ rc = FALSE;
+	  break;
+	}
+	set_marked(a);
+      }
+      for(j=0; j<i; j++)
+      { Word a = &t->arguments[j];
+
+	deRef(a);
+	clear_marked(a);
+      }
+
+      return rc;
+    }
+  }
+
+  return FALSE;
+}
+
+
+static
+PRED_IMPL("is_most_general_term", 1, is_most_general_term, 0)
+{ PRED_LD
+
+  return is_most_general_term(valTermRef(A1) PASS_LD);
 }
 
 
@@ -4746,10 +4825,16 @@ pl_true()		/* just to define it */
 
 word
 pl_halt(term_t code)
-{ int status;
+{ GET_LD
+  int status;
+  atom_t a;
 
-  if ( !PL_get_integer_ex(code, &status) )
-    fail;
+  if ( PL_get_atom(code, &a) && a == ATOM_abort )
+  { PL_abort_process();
+    return FALSE;				/* not reached */
+  } else if ( !PL_get_integer_ex(code, &status) )
+  { return FALSE;
+  }
 
   PL_halt(status);
   fail;					/* exception? */
@@ -5718,6 +5803,7 @@ BeginPredDefs(prims)
   PRED_DEF("term_variables", 3, term_variables3, 0)
   PRED_DEF("term_singletons", 2, term_singletons, 0)
   PRED_DEF("term_attvars", 2, term_attvars, 0)
+  PRED_DEF("is_most_general_term", 1, is_most_general_term, 0)
   PRED_DEF("$free_variable_set", 3, free_variable_set, 0)
   PRED_DEF("unifiable", 3, unifiable, 0)
 #ifdef O_TERMHASH

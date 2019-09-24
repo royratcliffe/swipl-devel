@@ -2,7 +2,7 @@
 
 \section{Notation of Predicate Descriptions}	\label{sec:preddesc}
 
-We have tried to keep the predicate descriptions clear and concise.
+We have tried to keep the predicat descriptions clear and concise.
 First, the predicate name is printed in bold face, followed by the
 arguments in italics.  Arguments are preceded by a mode indicator.
 There is no complete agreement on mode indicators in the Prolog
@@ -3354,6 +3354,11 @@ True if \arg{Trie} is a currently existing trie.  As this enumerates and
 then filters all known atoms this predicate is slow and should only be
 used for debugging purposes.  See also is_trie/1.
 
+    \predicate{trie_insert}{2}{+Trie, +Key}
+Insert the term \arg{Key} into \arg{Trie}. If \arg{Key} is already part
+of \arg{Trie} the predicates \emph{fails} silently.  This is the same
+as trie_insert/3, but using a fixed reserved \arg{Value}.
+
     \predicate{trie_insert}{3}{+Trie, +Key, +Value}
 Insert the term \arg{Key} into \arg{Trie} and associate it with
 \arg{Value}. \arg{Value} can be any term.  If \arg{Key}-\arg{Value}
@@ -3385,11 +3390,28 @@ The result is undefined (including crashes) if \arg{Handle} is not a
 handle returned by trie_insert_new/3 or the node has been removed
 afterwards.
 
+    \predicate[nondet]{trie_gen}{2}{+Trie, ?Key}
+True when \arg{Key} is a member of \arg{Trie}.  See also
+trie_gen_compiled/2.
+
     \predicate[nondet]{trie_gen}{3}{+Trie, ?Key, -Value}
 True when \arg{Key} is associated with \arg{Value} in \arg{Trie}.
 Backtracking retrieves all pairs. Currently scans the entire
 trie, even if \arg{Key} is partly known.  Currently unsafe if \arg{Trie}
-is modified while the values are being enumerated.
+is modified while the values are being enumerated.  See also
+trie_gen_compiled/3.
+
+    \predicate[nondet]{trie_gen_compiled}{2}{+Trie, ?Key}
+\nodescription
+    \predicate[nondet]{trie_gen_compiled}{3}{+Trie, ?Key, -Value}
+Similar to trie_gen/3, but uses a \jargon{compiled} representation of
+\arg{Trie}. The compiled representation is created lazily and
+manipulations of the trie (insert, delete) invalidate the current
+compiled representation. The compiled representation generates answers
+faster and, as it runs on a snapshot of the trie, is immune to
+concurrent modifications of the trie.  This predicate is used to
+generate answers from \jargon{answer tries} as used for tabled
+execution.  See \secref{tabling}.
 
     \predicate[nondet]{trie_property}{2}{?Trie, ?Property}
 True if \arg{Trie} exists with \arg{Property}.	 Intended for
@@ -3402,6 +3424,9 @@ properties visit all nodes of the trie. Defined properties are
     Number of nodes in the trie.
 	\termitem{size}{-Bytes}
     Required storage space of the trie.
+	\termitem{compiled_size}{-Bytes}
+    Required storage space for the compiled representation as used
+    by trie_gen_compiled/2,3.
 	\termitem{hashed}{-Count}
     Number of nodes that use a hashed index to its children.
     \end{description}
@@ -3545,6 +3570,60 @@ In SWI-Prolog all these directives are just predicates. This implies
 they can also be called by a program.  Do not rely on this feature if
 you want to maintain portability to other Prolog implementations.
 
+Notably with the introduction of tabling (see \secref{tabling}) it is
+common that a set of predicates require multiple options to be set.
+SWI-Prolog offers two mechanisms to cope with this. The predicate
+dynamic/2 can be used to make a list of predicates dynamic and set
+additional options. In addition and for compatibility with
+XSB,\footnote{Note that \const{as} is in XSB a high-priority operator
+and in SWI a low-priority and therefore both the sets of predicate
+indicators as multiple options require parenthesis.} all the predicates
+below accept a term \term{as}{(:PredicateIndicator, \ldots),
+(+Options)}, where \arg{Options} is a \jargon{comma-list} of one of more
+of the following options:
+
+\begin{description}
+    \termitem{incremental}{}
+Include a dynamic predicate into the incremental tabling dependency
+graph.  See \secref{tabling-incremental}.
+    \termitem{opaque}{}
+Opposite of \const{incremental}. For XSB compatibility.\footnote{In XSB,
+\const{opaque} is distinct from the default in the sense that dynamic
+switching beween \const{opaque} and \const{incremental} is allowed.}
+    \termitem{abstract}{Level}
+Used together with \const{incremental} to reduce the dependency graph.
+See \secref{tabling-incremental}.
+    \termitem{volatile}{}
+Do not save this predicate.  See volatile/1.
+    \termitem{multifile}{}
+Predicate may have clauses in multiple clauses.  See multifile/1.
+    \termitem{discontiguous}{}
+Predicate clauses may not be contiguous in the file. See
+discontiguous/1.
+    \termitem{shared}{}
+Dynamic predicate is shared between all threads.  This is currently
+the default.
+    \termitem{local}{}
+    \nodescription
+    \termitem{private}{}
+Dynamic predicate has distinct set of clauses in each thread.  See
+thread_local/1.
+\end{description}
+
+Below are some examples, where the last two are semantically identical.
+
+\begin{code}
+:- dynamic person/2 as incremental.
+:- dynamic (person/2,organization/2) as (incremental, abstract(0)).
+:- dynamic([ person/2,
+	     organization/2
+	   ],
+	   [ incremental(true),
+	     abstract(0)
+	   ]).
+\end{code}
+
+
 \begin{description}
     \prefixop[ISO]{dynamic}{:PredicateIndicator, \ldots}
 Informs the interpreter that the definition of the predicate(s) may change
@@ -3554,6 +3633,35 @@ between the threads. The directive thread_local/1 provides an
 alternative where each thread has its own clause list for the
 predicate.  Dynamic predicates can be turned into static ones using
 compile_predicates/1.
+
+    \predicate{dynamic}{2}{:ListOfPredicateIndicators, +Options}
+As dynamic/1, but allows for setting additional properties. This
+predicate allows for setting multiple properties on multiple
+predicates in a single call.  SWI-Prolog also offers the XSB
+compatible \exam{:- dynamic (p/1) as (incremental,abstract(0)).}
+syntax. See the introduction of \secref{declare}. Defined \arg{Options}
+are:
+
+    \begin{description}
+    \termitem{incremental}{+Boolean}
+Make the dynamic predicate signal depending \jargon{tables}.  See
+\secref{tabling-incremental}.
+    \termitem{abstract}{0}
+This option must be used together with \const{incremental}.  The
+only supported value is \exam{0}. With this option a call to the
+incremental dynamic predicate is recorded as the most generic
+term for the predicate rather than the specific variant.
+    \termitem{thread}{+Local}
+\arg{Local} is one of \const{shared} (default) or \const{local}.
+See also thread_local/1.
+    \termitem{multifile}{+Boolean}
+    \nodescription
+    \termitem{discontiguous}{+Boolean}
+    \nodescription
+    \termitem{volatile}{+Boolean}
+Set the corresponding property.  See multifile/1, discontiguous/1
+and volatile/1.
+    \end{description}
 
     \predicate{compile_predicates}{1}{:ListOfPredicateIndicators}
 Compile a list of specified dynamic predicates (see dynamic/1 and
@@ -3840,10 +3948,26 @@ This property is the opposite from \const{dynamic}, i.e., for each
 defined predicate, either \const{static} or \const{dynamic} is true but
 never both.
 
-    \termitem{tabled}{How}
-True of the predicate is \jargon{tabled}.  Currently, \arg{How} is
-always \const{default}, which is the same as \const{variant}. Future
-versions may provide \const{subsumptive}.  See table/1 for details.
+    \termitem{tabled}{}
+True of the predicate is \jargon{tabled}. The \term{tabled}{?Flag}
+property can be used to obtain details about how the predicate is
+tabled.
+
+    \termitem{tabled}{?Flag}
+True of the predicate is \jargon{tabled} and \arg{Flag} applies.  Any
+tabled predicate has one of the mutually exclusive flags \const{variant}
+or \const{subsumptive}. In addition, tabled predicates may have one or
+more the the following flags
+
+    \begin{description}
+	\termitem{shared}{} The table is shared between threads.
+	See \secref{tabling-shared}.
+	\termitem{incremental}{} The table is subject to
+	\jargon{incremental tabling}.  See \secref{tabling-incremental}
+    \end{description}
+
+Use the \const{tabled} property to enumerate all tabled predicates. See
+table/1 for details.
 
     \termitem{thread_local}{}
 If true (only possible on the multithreaded version) each thread has
@@ -4782,6 +4906,11 @@ term(Term, In, Tail) :-
 X = [104, 101, 108, 108, 111]
 \end{code}
 
+\arg{Output} takes one of the shapes below. Except for the first, the
+system creates a temporary stream using the \const{wchar_t} internal
+encoding that points at a memory buffer. The encoding cannot be changed
+and an attempt to call set_stream/2 using \term{encoding}{Encoding}
+results in a \const{permission_error} exception.
 
 \begin{description}
     \definition{A Stream handle or alias}
@@ -5098,7 +5227,13 @@ This predicate is meant for keyboard menu selection, etc. If SWI-Prolog
 was started with the \cmdlineoption{--no-tty} option this predicate
 reads an entire line of input and returns the first non-blank character
 on this line, or the character code of the newline (10) if the entire
-line consisted of blank characters.
+line consisted of blank characters. See also with_tty_raw/1.
+
+    \predicate{with_tty_raw}{1}{:Goal}
+Run goal with the user input and output streams set in \jargon{raw
+mode}, which implies the terminal makes the input available immediately
+instead of line-by-line and input that is read is not echoed. As a
+consequence, line editing does not work.  See also get_single_char/1.
 
     \predicate[ISO]{at_end_of_stream}{0}{}
 Succeeds after the last character of the current input stream has
@@ -5467,13 +5602,26 @@ argument.  For lists, only the list as a whole is given to portray/1.  If
 portray/1 succeeds print/1 assumes the term has been written.
 
     \predicate[ISO]{read}{1}{-Term}
-Read the next Prolog term from the current input stream and unify it
-with \arg{Term}.  On a syntax error read/1 displays an error message,
-attempts to skip the erroneous term and fails.  On reaching end-of-file
-\arg{Term} is unified with the atom \const{end_of_file}.
+Read the next \textbf{Prolog term} from the current input stream and
+unify it with \arg{Term}. On reaching end-of-file \arg{Term} is unified
+with the atom \const{end_of_file}. This is the same as read_term/2 using
+an empty option list.
+
+\textbf{[NOTE]} You might have found this while looking for a predicate
+to read input from a file or the user. Quite likely this is not what you
+need in this case. This predicate is for reading a \textbf{Prolog term}
+which may span multiple lines and must end in a \emph{full stop} (dot
+character followed by a layout character). The predicates for reading
+and writing Prololg terms are particularly useful for storing Prolog
+data in a file or transferring them over a network communication channel
+(socket) to another Prolog process. The libraries provide a wealth of
+predicates to read data in other formats. See e.g., \pllib{readutil},
+\pllib{pure_input} or libraries from the extension packages to read XML,
+JSON, YAML, etc.
 
     \predicate[ISO]{read}{2}{+Stream, -Term}
-Read \arg{Term} from \arg{Stream}.
+Read the next \textbf{Prolog term} from \arg{Stream}.  See read/1 and
+read_term/2 for details.
 
     \predicate{read_clause}{3}{+Stream, -Term, +Options}
 Equivalent to read_term/3, but sets options according to the current
@@ -5896,7 +6044,26 @@ the \const{singleton} option of numbervars/4.
 L = [].
 \end{code}
 
+    \predicate{is_most_general_term}{1}{@Term}
+True if \arg{Term} is a callable term where all arguments are
+non-sharing variables or \arg{Term} is a list whose members are
+all non-sharing variables.  This predicate is used to reason about
+call subsumption for tabling and is compatible with XSB. See
+also subsumes_term/2.  Examples:
 
+\begin{quote}
+\begin{tabular}{rlc}
+1 & \tt	is_most_general_term(1)	     & false \\
+2 & \tt	is_most_general_term(p)	     & true  \\
+3 & \tt	is_most_general_term(p(_))   & true  \\
+4 & \tt	is_most_general_term(p(_,a)) & false \\
+5 & \tt	is_most_general_term(p(X,X)) & false \\
+6 & \tt	is_most_general_term([])     & true  \\
+7 & \tt	is_most_general_term([_|_])  & false \\
+8 & \tt	is_most_general_term([_,_])  & true  \\
+9 & \tt	is_most_general_term([X,X])  & false \\
+\end{tabular}
+\end{quote}
 
     \predicate[ISO]{copy_term}{2}{+In, -Out}
 Create a version of \arg{In} with renamed (fresh) variables and unify it
@@ -8855,6 +9022,14 @@ If \const{true}, show the window, if \const{false} hide the window.
 If present, activate the window.
 \end{description}
 
+    \predicate{win_window_color}{2}{+Which, +RGB}
+Change the color of the console window.  \arg{Which} is one of
+\const{foreground}, \const{background}, \const{selection_foreground} or
+\const{selection_background}. \arg{RGB} is a term
+\term{rgb}{Red,Green,Blue} where the components are values between 0
+and 255. The defaults are established using the Windows API
+GetSysColor().
+
     \predicate{win_has_menu}{0}{}
 True if win_insert_menu/2 and win_insert_menu_item/4 are present.
 
@@ -9264,6 +9439,14 @@ PL_halt() which preforms the following steps:
     \item Call exit(Status) to terminate the process
     \end{enumerate}
 
+halt/1 has been extended in SWI-Prolog to accept the arg \const{abort}.
+This performs as halt/1 above except that:
+
+    \begin{itemize}
+    \item Termination cannot be cancelled with cancel_halt/1.
+    \item abort() is called instead of exit(Status).
+    \end{itemize}
+
     \predicate{prolog}{0}{}
 This goal starts the default interactive top level. Queries are read
 from the stream \const{user_input}. See also the Prolog flag
@@ -9353,7 +9536,7 @@ the trace point is set.
 
 The predicate trace/2 activates debug mode (see debug/0).  Each time
 a port (of the 4-port model) is passed that has a trace point set, the
-goal is printed as with trace/0.  Unlike trace/0, however, the execution
+goal is printed.  Unlike trace/0, however, the execution
 is continued without asking for further information.  Examples:
 
 \begin{center}
@@ -9364,8 +9547,6 @@ is continued without asking for further information.  Examples:
 \exam{?- trace({bar}/1, -all).}  & Stop tracing {bar}/1.
 \end{tabular}
 \end{center}
-
-The predicate debugging/0 shows all currently defined trace points.
 
     \predicate{notrace}{1}{:Goal}
 Call \arg{Goal}, but suspend the debugger while \arg{Goal} is executing.

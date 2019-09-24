@@ -331,6 +331,27 @@ defaultSystemInitFile(const char *a0)
 }
 
 
+static int
+is_hash_bang_file(const char *s)
+{ char fb[MAXPATHLEN];
+  char *fn;
+  IOSTREAM *fd;
+  int rc = FALSE;
+
+  if ( (fn = PrologPath(s, fb, sizeof(fb))) &&
+       (fd = Sopen_file(fb, "r")) )
+  { if ( Sgetc(fd) == '#' &&
+	 Sgetc(fd) == '!' )
+      rc = TRUE;
+
+    Sclose(fd);
+  }
+
+  return rc;
+}
+
+
+
 #define MEMAREA_INVALID_SIZE (uintptr_t)(~0L)
 
 static size_t
@@ -482,12 +503,15 @@ static void
 initDefaults(void)
 { GET_LD
 
-  systemDefaults.arch	     = PLARCH;
-  systemDefaults.stack_limit = DEFSTACKLIMIT;
-  systemDefaults.table_space = DEFTABLE;
-  systemDefaults.goal	     = NULL;
-  systemDefaults.toplevel    = "default";
-  systemDefaults.notty       = NOTTYCONTROL;
+  systemDefaults.arch		    = PLARCH;
+  systemDefaults.stack_limit	    = DEFSTACKLIMIT;
+  systemDefaults.table_space	    = DEFTABLE;
+#ifdef O_PLMT
+  systemDefaults.shared_table_space = DEFTABLE;
+#endif
+  systemDefaults.goal		    = NULL;
+  systemDefaults.toplevel	    = "default";
+  systemDefaults.notty		    = NOTTYCONTROL;
 
 #ifdef __WINDOWS__
   getDefaultsFromRegistry();
@@ -560,17 +584,19 @@ do_value:
 
 static void
 initDefaultOptions(void)
-{ GD->options.compileOut    = store_string("a.out");
-  GD->options.stackLimit    = systemDefaults.stack_limit;
-  GD->options.tableSpace    = systemDefaults.table_space;
-  GD->options.topLevel      = store_string(systemDefaults.toplevel);
-  GD->options.initFile      = store_string(systemDefaults.startup);
-  GD->options.scriptFiles   = NULL;
-  GD->options.saveclass	    = store_string("none");
+{ GD->options.compileOut       = store_string("a.out");
+  GD->options.stackLimit       = systemDefaults.stack_limit;
+  GD->options.tableSpace       = systemDefaults.table_space;
+#ifdef O_PLMT
+  GD->options.sharedTableSpace = systemDefaults.shared_table_space;
+#endif
+  GD->options.topLevel	       = store_string(systemDefaults.toplevel);
+  GD->options.initFile	       = store_string(systemDefaults.startup);
+  GD->options.scriptFiles      = NULL;
+  GD->options.saveclass	       = store_string("none");
 
   if ( systemDefaults.goal )
     opt_append(&GD->options.goals, systemDefaults.goal);
-
 
   if ( !GD->bootsession && GD->resources.DB )
   { IOSTREAM *op = SopenZIP(GD->resources.DB, "$prolog/options.txt", RC_RDONLY);
@@ -622,6 +648,8 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft, int compile)
 	    Sdprintf("%s ", argv0[i]);
 	});
 
+  GD->options.xpce = -1;
+
   for(argc=argc0,argv=argv0; argc > 0 && argv[0][0] == '-'; argc--, argv++ )
   { const char *s = &argv[0][1];
 
@@ -667,6 +695,11 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft, int compile)
 	    clearPrologFlagMask(PLFLAG_TTY_CONTROL);
 	} else
 	  return -1;
+      } else if ( (rc=is_bool_opt(s, "pce", &b)) )
+      { if ( rc == TRUE )
+	  GD->options.xpce = b;
+	else
+	  return -1;
       } else if ( (optval=is_longopt(s, "pldoc")) )
       { GD->options.pldoc_server = store_string(optval);
       } else if ( is_longopt(s, "home") )
@@ -701,6 +734,15 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft, int compile)
 	  return -1;
 
 	GD->options.tableSpace = size;
+#ifdef O_PLMT
+      } else if ( (optval=is_longopt(s, "shared_table_space")) )
+      { size_t size = memarea_limit(optval);
+
+	if ( size == MEMAREA_INVALID_SIZE )
+	  return -1;
+
+	GD->options.sharedTableSpace = size;
+#endif
       } else if ( (optval=is_longopt(s, "dump-runtime-variables")) )
       { GD->options.config = store_string(optval);
       } else if ( !compile )
@@ -794,7 +836,7 @@ Find the resource database.
 #endif
 
 static zipper *
-openResourceDB(int argc, char **argv)
+openResourceDB(int argc, char **argv, int is_hash_bang)
 { zipper *rc;
   char *xfile = NULL;
   int flags = (GD->bootsession ? RC_WRONLY|RC_CREATE|RC_TRUNC : RC_RDONLY);
@@ -803,31 +845,33 @@ openResourceDB(int argc, char **argv)
   char *exe, *exedir;
   int n;
 
-  for(n=0; n<argc-1; n++)
-  { if ( argv[n][0] == '-' && argv[n][2] == EOS ) /* -? */
-    { if ( argv[n][1] == '-' )
-	break;				/* trapped -- */
-      if ( GD->bootsession )
-      { if ( argv[n][1] == 'o' )
-	{ xfile = argv[n+1];
-	  break;
-	}
-      } else
-      { if ( argv[n][1] == 'x' )
-	{ xfile = argv[n+1];
-	  break;
+  if ( !is_hash_bang )
+  { for(n=0; n<argc-1; n++)
+    { if ( argv[n][0] == '-' && argv[n][2] == EOS ) /* -? */
+      { if ( argv[n][1] == '-' )
+	  break;				/* trapped -- */
+	if ( GD->bootsession )
+	{ if ( argv[n][1] == 'o' )
+	  { xfile = argv[n+1];
+	    break;
+	  }
+	} else
+	{ if ( argv[n][1] == 'x' )
+	  { xfile = argv[n+1];
+	    break;
+	  }
 	}
       }
     }
-  }
 
-  if ( xfile )
-  { errno = 0;
-    if ( !(rc = zip_open_archive(xfile, flags)) )
-      fatalError("Could not open resource database \"%s\": %s",
-		 xfile, errno ? OsError() : "not a ZIP file");
+    if ( xfile )
+    { errno = 0;
+      if ( !(rc = zip_open_archive(xfile, flags)) )
+	fatalError("Could not open resource database \"%s\": %s",
+		   xfile, errno ? OsError() : "not a ZIP file");
 
-    return rc;
+      return rc;
+    }
   }
 
   strcpy(tmp, GD->paths.executable);
@@ -877,6 +921,7 @@ int
 PL_initialise(int argc, char **argv)
 { int n;
   bool compile = FALSE;
+  int is_hash_bang = FALSE;
   const char *rcpath = "<none>";
 
   if ( GD->initialised )
@@ -919,23 +964,27 @@ PL_initialise(int argc, char **argv)
     if ( argc == 1 && giveVersionInfo(argv[0]) ) /* --help, --version, etc */
       exit(0);
 
-    for(n=0; n<argc; n++)		/* need to check this first */
-    { if ( streq(argv[n], "--" ) )	/* --: terminates argument list */
-	break;
-      if ( streq(argv[n], "-b" ) )	/* -b: boot compilation */
-      { GD->bootsession = TRUE;
-	break;
-      }
-      if ( streq(argv[n], "-c" ) )	/* -c: compilation */
-      { compile = TRUE;
-	break;
+    if ( argc > 1 && argv[0][0] != '-' && is_hash_bang_file(argv[0]) )
+    { is_hash_bang = TRUE;
+    } else
+    { for(n=0; n<argc; n++)		/* need to check this first */
+      { if ( streq(argv[n], "--" ) )	/* --: terminates argument list */
+	  break;
+	if ( streq(argv[n], "-b" ) )	/* -b: boot compilation */
+	{ GD->bootsession = TRUE;
+	  break;
+	}
+	if ( streq(argv[n], "-c" ) )	/* -c: compilation */
+	{ compile = TRUE;
+	  break;
+	}
       }
     }
 
     DEBUG(MSG_INITIALISE, if (GD->bootsession) Sdprintf("Boot session\n"););
 
     if ( !GD->resources.DB )
-    { if ( !(GD->resources.DB = openResourceDB(argc, argv)) )
+    { if ( !(GD->resources.DB = openResourceDB(argc, argv, is_hash_bang)) )
       { fatalError("Could not find system resources");
       }
       rcpath = zipper_file(GD->resources.DB);
@@ -1083,12 +1132,16 @@ usage(void)
     "    --home=DIR               Use DIR as SWI-Prolog home\n",
     "    --stack_limit=size[BKMG] Specify maximum size of Prolog stacks\n",
     "    --table_space=size[BKMG] Specify maximum size of SLG tables\n",
+#ifdef O_PLMT
+    "    --shared_table_space=size[BKMG] Maximum size of shared SLG tables\n",
+#endif
+    "    --pce[=bool]             Make the xpce gui available\n",
     "    --pldoc[=port]           Start PlDoc server [at port]\n",
 #ifdef __WINDOWS__
     "    --win_app	          Behave as Windows application\n",
 #endif
 #ifdef O_DEBUG
-    "    -d topic,topic,...       Enable maintenance debugging\n",
+    "    -d topic,topic,...       Enable C-source DEBUG channels\n",
 #endif
     "\n",
     "Boolean options may be written as --name=bool, --name, --no-name ",
@@ -1107,6 +1160,15 @@ usage(void)
 
   return TRUE;
 }
+
+
+static
+PRED_IMPL("$usage", 0, usage, 0)
+{ usage();
+
+  return TRUE;
+}
+
 
 #ifndef PLVERSION_TAG
 #define PLVERSION_TAG ""
@@ -1179,12 +1241,12 @@ register_halt(OnHalt *where, halt_function f, void *arg)
 
 void
 PL_on_halt(halt_function f, void *arg)
-{ return register_halt(&GD->os.on_halt_list, f, arg);
+{ register_halt(&GD->os.on_halt_list, f, arg);
 }
 
 void
 PL_exit_hook(halt_function f, void *arg)
-{ return register_halt(&GD->os.exit_hooks, f, arg);
+{ register_halt(&GD->os.exit_hooks, f, arg);
 }
 
 
@@ -1419,11 +1481,8 @@ vsysError(const char *fm, va_list args)
   time_t now;
   char tbuf[48];
 
-  switch ( active++ )
-  { case 1:
-      PL_halt(3);
-    case 2:
-      abort();
+  if ( active++ )
+  { abort();
   }
 
   now = time(NULL);
@@ -1459,7 +1518,7 @@ vsysError(const char *fm, va_list args)
 #endif /*O_DEBUGGER*/
 
   if ( GD->bootsession )
-    PL_halt(1);
+    PL_abort_process();
 
 action:
 #ifdef HAVE_GETPID
@@ -1472,9 +1531,9 @@ action:
 
   switch(getSingleChar(Sinput, FALSE))
   { case EOF:
-      Sfprintf(Serror, "EOF: exit (status 3)\n");
+      Sfprintf(Serror, "EOF: exit (status 134)\n");
     case 'e':
-      PL_halt(3);
+      PL_abort_process();
       break;
     default:
       Sfprintf(Serror,
@@ -1493,11 +1552,8 @@ vfatalError(const char *fm, va_list args)
   time_t now;
   char tbuf[48];
 
-  switch ( active++ )
-  { case 1:
-      exit(2);
-    case 2:
-      abort();
+  if ( active++ )
+  { abort();
   }
 
   now = time(NULL);
@@ -1518,8 +1574,8 @@ vfatalError(const char *fm, va_list args)
   Sfprintf(Serror, "]\n");
 #endif
 
-  PL_halt(2);
-  exit(2);				/* in case PL_halt() does not */
+  PL_abort_process();
+  assert(0); /* not reached */
 }
 
 
@@ -1601,3 +1657,14 @@ vwarning(const char *fm, va_list args)
 
   return FALSE;
 }
+
+
+
+
+		 /*******************************
+		 *      PUBLISH PREDICATES	*
+		 *******************************/
+
+BeginPredDefs(init)
+  PRED_DEF("$usage", 0, usage, 0)
+EndPredDefs

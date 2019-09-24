@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2017, University of Amsterdam
+    Copyright (c)  1985-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -99,6 +100,9 @@ setupProlog(void)
 
   initPrologLocalData(PASS_LD1);
   LD->tabling.node_pool.limit = GD->options.tableSpace;
+#ifdef O_PLMT
+  GD->tabling.node_pool.limit = GD->options.sharedTableSpace;
+#endif
 
   DEBUG(1, Sdprintf("Atoms ...\n"));
   initAtoms();
@@ -117,6 +121,8 @@ setupProlog(void)
   initRecords();
   DEBUG(1, Sdprintf("Tries ...\n"));
   initTries();
+  DEBUG(1, Sdprintf("Tabling ...\n"));
+  initTabling();
   DEBUG(1, Sdprintf("Flags ...\n"));
   initFlags();
   DEBUG(1, Sdprintf("Foreign Predicates ...\n"));
@@ -648,7 +654,7 @@ static void
 hupHandler(int sig)
 { (void)sig;
 
-  PL_halt(2);
+  PL_halt(128+sig);
 }
 #endif
 
@@ -663,12 +669,28 @@ static void
 terminate_handler(int sig)
 { signal(sig, SIG_DFL);
 
-  run_on_halt(&GD->os.exit_hooks, 3);
+  run_on_halt(&GD->os.exit_hooks, 128+sig);
 
 #if defined(HAVE_KILL) && defined(HAVE_GETPID)
   kill(getpid(), sig);
 #else
-  exit(3);
+  switch( sig )
+  {
+#ifdef SIGTERM
+    case SIGTERM:
+      exit(128+SIGTERM);
+#endif
+#ifdef SIGQUIT
+    case SIGQUIT:
+      exit(128+SIGQUIT);
+#endif
+#ifdef SIGABRT
+    case SIGABRT:
+      abort();
+#endif
+    default:
+      assert(0); /* not reached */
+  }
 #endif
 }
 
@@ -1062,7 +1084,7 @@ handleSignals(ARG1_LD)
 
       for( ; mask ; mask <<= 1, sig++ )
       { if ( LD->signal.pending[i] & mask )
-	{ __sync_and_and_fetch(&LD->signal.pending[i], ~mask);
+	{ ATOMIC_AND(&LD->signal.pending[i], ~mask);
 
 	  done++;
 	  dispatch_signal(sig, TRUE);
@@ -1348,6 +1370,7 @@ emptyStacks(void)
     DEBUG(3, Sdprintf("attvar.tail at %p\n", valTermRef(LD->attvar.tail)));
 #endif
     LD->tabling.delay_list  = init_delay_list();
+    LD->tabling.idg_current = PL_new_term_ref();
 #ifdef O_GVAR
     destroyGlobalVars();
 #endif

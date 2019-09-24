@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1999-2017, University of Amsterdam
+    Copyright (c)  1999-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -74,19 +75,6 @@ typedef enum
   PL_THREAD_CREATED,			/* just created */
 } thread_status;
 
-#ifdef __WINDOWS__
-enum
-{ SIGNAL     = 0,
-  BROADCAST  = 1,
-  MAX_EVENTS = 2
-} win32_event_t;
-
-typedef struct
-{ HANDLE events[MAX_EVENTS];		/* events to be signalled */
-  int    waiters;			/* # waiters */
-} win32_cond_t;
-#endif
-
 typedef struct _PL_thread_info_t
 { int		    pl_tid;		/* Prolog thread id */
   size_t	    stack_limit;	/* Stack sizes */
@@ -153,8 +141,8 @@ typedef struct thread_handle
 typedef struct message_queue
 { simpleMutex	       mutex;		/* Message queue mutex */
 #ifdef __WINDOWS__
-  win32_cond_t	       cond_var;
-  win32_cond_t	       drain_var;
+  CONDITION_VARIABLE   cond_var;
+  CONDITION_VARIABLE   drain_var;
 #else
   pthread_cond_t       cond_var;	/* condvar for reading */
   pthread_cond_t       drain_var;	/* condvar for writing */
@@ -218,9 +206,10 @@ extern counting_mutex _PL_mutexes[];	/* Prolog mutexes */
 #define L_UMUTEX       23
 #define L_INIT_ATOMS   24
 #define L_CGCGEN       25
+#define L_EVHOOK       26
 #ifdef __WINDOWS__
-#define L_DDE	       26
-#define L_CSTACK       27
+#define L_DDE	       27
+#define L_CSTACK       28
 #endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -395,6 +384,37 @@ COMMON(void)	markAtomsThreadMessageQueue(PL_local_data_t *ld);
 
 #define acquire_ldata(info)	acquire_ldata__LD(info PASS_LD)
 #define release_ldata(ld)	(LD->thread.info->access.ldata = NULL)
+
+		 /*******************************
+		 *     CONDITION VARIABLES	*
+		 *******************************/
+
+#ifdef __WINDOWS__
+
+COMMON(int)	cv_timedwait(CONDITION_VARIABLE *cv,
+			     CRITICAL_SECTION *external_mutex,
+			     struct timespec *deadline);
+
+#define cv_broadcast(cv)	WakeAllConditionVariable(cv)
+#define cv_signal(cv)		WakeConditionVariable(cv)
+#define cv_init(cv,p)		InitializeConditionVariable(cv)
+#define cv_destroy(cv)		(void)cv
+
+#else
+
+COMMON(int)	cv_timedwait(pthread_cond_t *cv,
+			     pthread_mutex_t *external_mutex,
+			     struct timespec *deadline);
+
+#define cv_broadcast(cv)	pthread_cond_broadcast(cv)
+#define cv_signal(cv)		pthread_cond_signal(cv)
+#define cv_init(cv,p)		pthread_cond_init(cv,p)
+#define cv_destroy(cv)		pthread_cond_destroy(cv)
+
+#endif /* __WINDOWS__ */
+
+#define cv_wait(cv, m)		cv_timedwait(cv, m, NULL)
+
 
 #else /*O_PLMT, end of threading-stuff */
 

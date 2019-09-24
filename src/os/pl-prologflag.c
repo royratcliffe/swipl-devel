@@ -35,14 +35,16 @@
 */
 
 /*#define O_DEBUG 1*/
+#ifdef __WINDOWS__
+#include <winsock2.h>
+#include <windows.h>
+#include <process.h>			/* getpid() */
+#endif
 #include "pl-incl.h"
 #include "pl-ctype.h"
 #include <ctype.h>
 #ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
-#endif
-#ifdef __WINDOWS__
-#include <process.h>			/* getpid() */
 #endif
 #include <time.h>
 
@@ -827,6 +829,10 @@ set_prolog_flag_unlocked(term_t key, term_t value, int flags)
 #endif
       if ( k == ATOM_table_space )
 	LD->tabling.node_pool.limit = (size_t)i;
+#ifdef O_PLMT
+      else if ( k == ATOM_shared_table_space )
+	GD->tabling.node_pool.limit = (size_t)i;
+#endif
       else if ( k == ATOM_stack_limit )
       { if ( !set_stack_limit((size_t)i) )
 	  return FALSE;
@@ -1355,6 +1361,8 @@ initPrologFlags(void)
 #endif
 #ifdef O_PLMT
   setPrologFlag("threads",	FT_BOOL, !GD->options.nothreads, 0);
+  if ( GD->options.xpce >= 0 )
+    setPrologFlag("xpce",	FT_BOOL, GD->options.xpce, 0);
   setPrologFlag("system_thread_id", FT_INTEGER|FF_READONLY, 0, 0);
   setPrologFlag("gc_thread",    FT_BOOL,
 		!GD->options.nothreads &&
@@ -1475,7 +1483,12 @@ initPrologFlags(void)
 #ifdef O_MITIGATE_SPECTRE
   setPrologFlag("mitigate_spectre", FT_BOOL, FALSE, PLFLAG_MITIGATE_SPECTRE);
 #endif
+#ifdef POSIX_SHELL
   setPrologFlag("posix_shell", FT_ATOM, POSIX_SHELL);
+#endif
+
+  setPrologFlag("table_incremental", FT_BOOL, FALSE, PLFLAG_TABLE_INCREMENTAL);
+  setPrologFlag("table_shared",      FT_BOOL, FALSE, PLFLAG_TABLE_SHARED);
 
   setTmpDirPrologFlag();
   setTZPrologFlag();
@@ -1527,6 +1540,10 @@ setArgvPrologFlag(const char *flag, int argc, char **argv)
 static void
 setTZPrologFlag(void)
 { tzset();
+
+#ifdef _MSC_VER
+#define timezone _timezone
+#endif
 
   setPrologFlag("timezone", FT_INTEGER|FF_READONLY, timezone);
 }

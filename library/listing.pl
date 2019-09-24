@@ -43,6 +43,7 @@
           portray_clause/3              % +Stream, +Clause, +Options
         ]).
 :- use_module(library(lists)).
+:- use_module(library(apply)).
 :- use_module(library(settings)).
 :- use_module(library(option)).
 :- use_module(library(error)).
@@ -289,6 +290,24 @@ decl(volatile,     volatile).
 decl(multifile,    multifile).
 decl(public,       public).
 
+%!  declaration(:Head, +Module, -Decl) is nondet.
+%
+%   True when the directive Decl (without  :-/1)   needs  to  be used to
+%   restore the state of the predicate Head.
+%
+%   @tbd Answer subsumption, dynamic/2 to   deal  with `incremental` and
+%   abstract(Depth)
+
+declaration(Pred, Source, Decl) :-
+    predicate_property(Pred, tabled),
+    Pred = M:Head,
+    (   M:'$table_mode'(Head, Head, _)
+    ->  decl_term(Pred, Source, Funct),
+        table_options(Pred, Funct, TableDecl),
+        Decl = table(TableDecl)
+    ;   comment('% tabled using answer subsumption', []),
+        fail                                    % TBD
+    ).
 declaration(Pred, Source, Decl) :-
     decl(Prop, Declname),
     predicate_property(Pred, Prop),
@@ -328,6 +347,13 @@ implies_transparent(:).
 implies_transparent(//).
 implies_transparent(^).
 
+table_options(Pred, Decl0, as(Decl0, Options)) :-
+    findall(Flag, predicate_property(Pred, tabled(Flag)), [F0|Flags]),
+    !,
+    foldl(table_option, Flags, F0, Options).
+table_options(_, Decl, Decl).
+
+table_option(Flag, X, (Flag,X)).
 
 list_declarations(Pred, Source) :-
     findall(Decl, declaration(Pred, Source, Decl), Decls),
@@ -400,7 +426,7 @@ unify_head(_, _, _).
 bind_vars([]) :-
     !.
 bind_vars([Name = Var|T]) :-
-    Var = '$VAR'(Name),
+    ignore(Var = '$VAR'(Name)),
     bind_vars(T).
 
 %!  name_other_vars(+Term, +Bindings) is det.

@@ -360,6 +360,10 @@ architecture identifier.  Also available as \cmdlineoption{-v}.
 \subsection{Command line options for running Prolog}
 \label{sec:running-options}
 
+Note that \jargon{boolean options} may be written as \exam{--name},
+(true), \exam{--noname} or \exam{--no-name} (false).  They are written
+as \exam{--no-name} below as the default is `true'.
+
 \begin{description}
     \cmdlineoptionitem{--home=DIR}{}
 Use DIR as home directory.  See \secref{findhome} for details.
@@ -369,11 +373,11 @@ Use DIR as home directory.  See \secref{findhome} for details.
 Set the Prolog flag \prologflag{verbose} to \const{silent}, suppressing
 informational and banner messages.  Also available as \cmdlineoption{-q}.
 
-    \cmdlineoptionitem{--nodebug}{}
+    \cmdlineoptionitem{--no-debug}{}
 Disable debugging.  See the current_prolog_flag/2 flag
 \prologflag{generate_debug_info} for details.
 
-    \cmdlineoptionitem{--nosignals}{}
+    \cmdlineoptionitem{--no-signals}{}
 Inhibit any signal handling by Prolog, a property that is sometimes
 desirable for embedded applications. This option sets the flag
 \prologflag{signals} to \const{false}. See \secref{sigembedded} for
@@ -381,9 +385,15 @@ details.  Note that the handler to unblock system calls is still
 installed. This can be prevented using \exam{--sigalert=0} additionally.
 See \cmdlineoption{--sigalert}.
 
-    \cmdlineoptionitem{--nothreads}{}
+    \cmdlineoptionitem{--no-threads}{}
 Disable threading for the multi-threaded version at runtime.  See also
 the flags \prologflag{threads} and \prologflag{gc_thread}.
+
+    \cmdlineoptionitem{--no-pce}{}
+Enable/disable the xpce GUI subsystem. The default is to make it
+available as autoload component if it is installed and the system
+can access the graphics.  Using \exam{--pce} load the xpce system
+in user space and \exam{--no-pce} makes it unavailable in the session.
 
     \cmdlineoptionitem{--pldoc}{[=port]}
 Start the PlDoc documentation system on a free network port and launch
@@ -512,6 +522,9 @@ use. It is a memnonic for \textbf{M}emoizing.} answers for
 \jargon{tabling} are stored. The default is 1Gb on 64~bit machines and
 512Mb on 32~bit machines. See the Prolog flag
 \prologflag{table_space}
+    \cmdlineoptionitem*{-shared_table_space}{size[bkmg]}
+Limit for the table space for \jargon{shared} tables. See
+\secref{tabling-shared}.
 \end{description}
 
 
@@ -577,6 +590,56 @@ Print debug messages for DEBUG statements tagged with one of the
 indicated tokens. Only has effect if the system is compiled with the
 \const{-DO_DEBUG} flag. System maintenance only.
 \end{description}
+
+
+\section{UI Themes}				\label{sec:theme}
+
+UI (colour) themes play a role in two parts: when writing to the
+\jargon{console} and for the xpce-based development tools such as
+PceEmacs or the graphical debugger. Coloured console output is based on
+ansi_format/3. The central message infra structure based on
+print_message/2 labels message (components) with a Prolog term that
+specifies the role. This is mapped to concrete colours by means of the
+hook prolog:console_color/2. Theming the IDE uses xpce \jargon{class
+variables} that are initialised from Prolog when xpce is loaded.
+
+Themes are implemented as a Prolog file in the file search path
+library/theme.  A theme can be loaded using (for example) the directive
+below in the user's initialization file (see \secref{initfile}).
+
+\begin{code}
+:- use_module(library(theme/dark)).
+\end{code}
+
+The theme file \exam{library(theme/auto)} is provided to automatically
+choose a reasonable theme based on the environment.  The current version
+detects the background color on \textit{xterm} compatible terminal
+emulators (found on most Unix systems) and loads the \const{dark} theme
+if the background is `darkish'.
+
+The following notes apply to the different platforms on which SWI-Prolog
+is supported:
+
+\begin{description}
+    \item[Unix/Linux]
+If an xterm compatible terminal emulator is used to run Prolog you may
+wish to load either an explicit theme or \exam{library(theme/auto)}.
+
+    \item[Windows]
+The \program{swipl-win.exe} graphical application can be themed by
+loading a theme file.  The theme file also sets the foreground and
+background colours for the console.
+\end{description}
+
+
+\subsection{Status of theme support}		\label{sec:theme-status}
+
+Theme support was added in SWI-Prolog 8.1.11. Only part of the IDE tools
+are covered and the only additional theme (\const{dark}) is not net well
+balanced. The interfaces between the theme file and notably the IDE
+components is not very well established.  Please contribute by improving
+the \const{dark} theme. Once that is complete and properly functioning
+we can start adding new themes.
 
 
 \section{GNU Emacs Interface}			\label{sec:gemacs}
@@ -1739,6 +1802,10 @@ absolute_file_name/3.
 Name of the environment variable used by the system to search for shared
 objects.
 
+    \prologflagitem{shared_table_space}{integer}{rw}
+Space reserved for storing shared answer tables. See
+\secref{tabling-shared} and the Prolog flag \prologflag{table_space}.
+
     \prologflagitem{signals}{bool}{r}
 Determine whether Prolog is handling signals (software interrupts). This
 flag is \const{false} if the hosting OS does not support signal handling
@@ -1762,6 +1829,14 @@ Available in multithreaded version (see \secref{threads}) where the
 operating system provides system-wide integer thread identifiers. The
 integer is the thread identifier used by the operating system for the
 calling thread. See also thread_self/1.
+
+    \prologflagitem{table_incremental}{bool}{rw}
+Set the default for whether to use incremental tabling or not.
+Initially set the \const{false}.  See table/1.
+
+    \prologflagitem{table_shared}{bool}{rw}
+Set the default for whether to use shared tabling or not.
+Initially set the \const{false}.  See table/1.
 
     \prologflagitem{table_space}{integer}{rw}
 Space reserved for storing answer tables for \jargon{tabled predicates}

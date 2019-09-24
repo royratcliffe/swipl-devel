@@ -35,9 +35,12 @@
 
 #include "pl-incl.h"
 #include "pl-trie.h"
+#include "pl-tabling.h"
 #include "pl-indirect.h"
+#define NO_AC_TERM_WALK 1
 #define AC_TERM_WALK_POP 1
 #include "pl-termwalk.c"
+#include "pl-dbref.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This file implements tries of  terms.  The   trie  itself  lives  in the
@@ -60,9 +63,14 @@ TODO
   - Make trie_gen/3 take the known prefix into account
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define RESERVED_TRIE_VAL(n) (((word)(-(intptr_t)n)<<LMASK_BITS) | TAG_VAR)
+#define RESERVED_TRIE_VAL(n) (((word)((uintptr_t)n)<<LMASK_BITS) | \
+			      TAG_VAR|STG_LOCAL)
 #define TRIE_ERROR_VAL       RESERVED_TRIE_VAL(1)
-#define TRIE_KEY_POP         RESERVED_TRIE_VAL(2)
+#define TRIE_KEY_POP(n)      RESERVED_TRIE_VAL(10+(n))
+
+#define IS_TRIE_KEY_POP(w)   ((tagex(w) == (TAG_VAR|STG_LOCAL) && \
+			       ((w)>>LMASK_BITS) > 10) ? ((w)>>LMASK_BITS) - 10 \
+						       : 0)
 
 #define NVARS_FAST 100
 
@@ -82,10 +90,10 @@ typedef struct ukey_state
   Word		var_buf[NVARS_FAST];	/* quick var buffer */
 } ukey_state;
 
-static void	trie_destroy(trie *trie);
 static int	unify_key(ukey_state *state, word key ARG_LD);
 static void	init_ukey_state(ukey_state *state, trie *trie, Word p);
 static void	destroy_ukey_state(ukey_state *state);
+static void	set_trie_clause_general_undefined(Clause cl);
 
 
 		 /*******************************
@@ -157,7 +165,6 @@ static PL_blob_t trie_blob =
 		 *******************************/
 
 static trie_node       *new_trie_node(trie *trie, word key);
-static void		clear_vars(Word k, size_t var_number ARG_LD);
 static void		destroy_node(trie *trie, trie_node *n);
 static void		clear_node(trie *trie, trie_node *n, int dealloc);
 static inline void	release_value(word value);
@@ -183,6 +190,7 @@ trie_create(void)
   if ( (trie = PL_malloc(sizeof(*trie))) )
   { memset(trie, 0, sizeof(*trie));
     trie->magic = TRIE_MAGIC;
+    trie->node_count = 1;		/* the root */
 
     return trie;
   } else
@@ -192,17 +200,38 @@ trie_create(void)
 }
 
 
-static void
+void
 trie_destroy(trie *trie)
 { DEBUG(MSG_TRIE_GC, Sdprintf("Destroying trie %p\n", trie));
+  trie->magic = TRIE_CMAGIC;
   trie_empty(trie);
   PL_free(trie);
 }
 
 
+static void
+trie_discard_clause(trie *trie)
+{ atom_t dbref;
+
+  if ( (dbref=trie->clause) )
+  { if ( COMPARE_AND_SWAP(&trie->clause, dbref, 0) &&
+	 GD->cleaning == CLN_NORMAL )		/* otherwise reclaims clause from */
+    { ClauseRef cref = clause_clref(dbref);	/* two ends */
+
+      if ( cref )
+      { Clause cl = cref->value.clause;
+	set_trie_clause_general_undefined(cl);	/* TBD: only if undefined */
+	retractClauseDefinition(cl->predicate, cl);
+      }
+      PL_unregister_atom(dbref);
+    }
+  }
+}
+
+
 void
 trie_empty(trie *trie)
-{ trie->magic = TRIE_CMAGIC;
+{ trie_discard_clause(trie);
 
   if ( !trie->references )
   { indirect_table *it = trie->indirects;
@@ -210,6 +239,8 @@ trie_empty(trie *trie)
     clear_node(trie, &trie->root, FALSE);	/* TBD: verify not accessed */
     if ( it && COMPARE_AND_SWAP(&trie->indirects, it, NULL) )
       destroy_indirect_table(it);
+    trie->node_count = 1;
+    trie->value_count = 0;
   }
 }
 
@@ -282,16 +313,17 @@ next:
   if ( n->value )
     release_value(n->value);
 
-  if ( children.any &&
-       COMPARE_AND_SWAP(&n->children.any, children.any, NULL) )
-  { if ( dealloc )
-    { ATOMIC_DEC(&trie->node_count);
-      if ( trie->alloc_pool )
-	ATOMIC_SUB(&trie->alloc_pool->size, sizeof(trie_node));
-      PL_free(n);
-    }
+  if ( dealloc )
+  { ATOMIC_DEC(&trie->node_count);
+    if ( trie->alloc_pool )
+      ATOMIC_SUB(&trie->alloc_pool->size, sizeof(trie_node));
+    PL_free(n);
+  } else
+  { n->children.any = NULL;
+  }
 
-    switch( children.any->type )
+  if ( children.any )
+  { switch( children.any->type )
     { case TN_KEY:
       { n = children.key->child;
         PL_free(children.key);
@@ -377,11 +409,16 @@ insert_child(trie *trie, trie_node *n, word key ARG_LD)
 	  } else
 	  { trie_children_hashed *hnode = PL_malloc(sizeof(*hnode));
 
-	    hnode->type  = TN_HASHED;
-	    hnode->table = newHTable(4);
+	    hnode->type     = TN_HASHED;
+	    hnode->table    = newHTable(4);
+	    hnode->var_keys = 0;
 	    addHTable(hnode->table, (void*)children.key->key,
 				    children.key->child);
 	    addHTable(hnode->table, (void*)key, (void*)new);
+	    if ( tagex(children.key->key) == TAG_VAR )
+	      hnode->var_keys++;
+	    if ( tagex(new->key) == TAG_VAR )
+	      hnode->var_keys++;
 
 	    if ( COMPARE_AND_SWAP(&n->children.hash, children.hash, hnode) )
 	    { PL_free(children.any);		/* TBD: Safely free */
@@ -400,6 +437,8 @@ insert_child(trie *trie, trie_node *n, word key ARG_LD)
 
 	  if ( new == old )
 	  { new->parent = n;
+	    if ( tagex(new->key) == TAG_VAR )
+	      ATOMIC_INC(&children.hash->var_keys);
 	  } else
 	  { destroy_node(trie, new);
 	  }
@@ -471,31 +510,45 @@ prune_error(trie *trie, trie_node *node ARG_LD)
 
 
 int
-trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
+trie_lookup(trie *trie, trie_node **nodep, Word k, int add, TmpBuffer vars ARG_LD)
 { term_agenda_P agenda;
   trie_node *node = &trie->root;
   size_t var_number = 0;
   int rc = TRUE;
-  int compounds = 0;
+  size_t compounds = 0;
+  tmp_buffer varb;
+
+  TRIE_STAT_INC(trie, lookups);
 
   initTermAgenda_P(&agenda, 1, k);
   while( node )
   { Word p;
     word w;
+    size_t popn;
 
     if ( !(p=nextTermAgenda_P(&agenda)) )
       break;
-    if ( p == AC_TERM_POP )
-    { if ( !(node = follow_node(trie, node, TRIE_KEY_POP, add PASS_LD)) )
-	break;
-      continue;
+    if ( (popn = IS_AC_TERM_POP(p)) )
+    { compounds -= popn;
+      if ( compounds > 0 )
+      { if ( !(node = follow_node(trie, node, TRIE_KEY_POP(popn), add PASS_LD)) )
+	  break;
+	continue;
+      } else
+	break;				/* finished toplevel */
     }
 
     w = *p;
     switch( tag(w) )
     { case TAG_VAR:
 	if ( isVar(w) )
-	  *p = w = ((((word)++var_number))<<LMASK_BITS)|TAG_VAR;
+	{ if ( var_number++ == 0 && !vars )
+	  { vars = &varb;
+	    initBuffer(vars);
+	  }
+	  addBuffer(vars, p, Word);
+	  *p = w = ((((word)var_number))<<LMASK_BITS)|TAG_VAR;
+	}
         node = follow_node(trie, node, w, add PASS_LD);
 	break;
       case TAG_ATTVAR:
@@ -508,7 +561,7 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
       { Functor f = valueTerm(w);
         size_t arity = arityFunctor(f->definition);
 
-	if ( add && ++compounds == 1000 && !is_acyclic(p PASS_LD) )
+	if ( ++compounds == 1000 && add && !is_acyclic(p PASS_LD) )
 	{ rc = TRIE_LOOKUP_CYCLIC;
 	  prune_error(trie, node PASS_LD);
 	  node = NULL;
@@ -533,7 +586,18 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
     }
   }
   clearTermAgenda_P(&agenda);
-  clear_vars(k, var_number PASS_LD);
+
+  if ( var_number )
+  { Word *pp = baseBuffer(vars, Word);
+    Word *ep = topBuffer(vars, Word);
+
+    for(; pp < ep; pp++)
+    { Word vp = *pp;
+      setVar(*vp);
+    }
+    if ( vars == &varb )
+      discardBuffer(vars);
+  }
 
   if ( rc == TRUE )
   { if ( node )
@@ -546,48 +610,14 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
 }
 
 
-static void
-clear_vars(Word k, size_t var_number ARG_LD)
-{ if ( var_number > 0 )
-  { term_agenda agenda;
-    Word p;
-
-    initTermAgenda(&agenda, 1, k);
-    while( var_number > 0 && (p=nextTermAgenda(&agenda)) )
-    { word w = *p;
-
-      switch( tag(w) )
-      { case TAG_VAR:
-	{ if ( !isVar(*p) )
-	  { setVar(*p);
-	    --var_number;
-	  }
-	  break;
-	}
-        case TAG_COMPOUND:
-	{ Functor f = valueTerm(w);
-	  int arity = arityFunctor(f->definition);
-
-	  pushWorkAgenda(&agenda, arity, f->arguments);
-	  break;
-	}
-      }
-    }
-    clearTermAgenda(&agenda);
-
-    assert(var_number == 0);
-  }
-}
-
-
 trie *
-get_trie_form_node(trie_node *node)
+get_trie_from_node(trie_node *node)
 { trie *trie_ptr;
 
   for( ; node->parent; node = node->parent )
     ;
   trie_ptr = (trie *)((char*)node - offsetof(trie, root));
-  assert(trie_ptr->magic == TRIE_MAGIC);
+  assert(trie_ptr->magic == TRIE_MAGIC || trie_ptr->magic == TRIE_CMAGIC);
 
   return trie_ptr;
 }
@@ -596,7 +626,7 @@ get_trie_form_node(trie_node *node)
 int
 is_ground_trie_node(trie_node *node)
 { for( ; node->parent; node = node->parent )
-  { if ( tag(node->key) == TAG_VAR && node->key != TRIE_KEY_POP )
+  { if ( tagex(node->key) == TAG_VAR )
       return FALSE;
   }
 
@@ -618,7 +648,7 @@ unify_trie_term(trie_node *node, term_t term ARG_LD)
   size_t kc = 0;
   int rc = TRUE;
   trie *trie_ptr;
-  fid_t fid;
+  mark m;
 						/* get the keys */
   for( ; node->parent; node = node->parent )
   { if ( kc == keys_allocated )
@@ -643,21 +673,23 @@ unify_trie_term(trie_node *node, term_t term ARG_LD)
   trie_ptr = (trie *)((char*)node - offsetof(trie, root));
   assert(trie_ptr->magic == TRIE_MAGIC);
 
-  fid = PL_open_foreign_frame();
   for(;;)
   { ukey_state ustate;
     size_t i;
 
   retry:
+    Mark(m);
     init_ukey_state(&ustate, trie_ptr, valTermRef(term));
     for(i=kc; i-- > 0; )
     { if ( (rc=unify_key(&ustate, keys[i] PASS_LD)) != TRUE )
       { destroy_ukey_state(&ustate);
 	if ( rc == FALSE )
 	  goto out;
-	PL_rewind_foreign_frame(fid);
-	if ( makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
+	Undo(m);
+	if ( makeMoreStackSpace(rc, ALLOW_GC) )
 	  goto retry;
+	else
+	  return FALSE;
       }
     }
     destroy_ukey_state(&ustate);
@@ -665,7 +697,6 @@ unify_trie_term(trie_node *node, term_t term ARG_LD)
   }
 
 out:
-  PL_close_foreign_frame(fid);
   if ( keys != fast )
     free(keys);
 
@@ -786,17 +817,15 @@ trie_symbol(trie *trie)
 trie *
 symbol_trie(atom_t symbol)
 { void *data;
-  size_t len;
   PL_blob_t *type;
 
-  if ( (data = PL_blob_data(symbol, &len, &type)) && type == &trie_blob )
+  if ( (data = PL_blob_data(symbol, NULL, &type)) && type == &trie_blob )
   { tref *ref = data;
 
     if ( ref->trie->magic == TRIE_MAGIC )
       return ref->trie;
   }
 
-  assert(0);
   return NULL;
 }
 
@@ -824,6 +853,22 @@ get_trie(term_t t, trie **tp)
     PL_existence_error("trie", t);
   } else
     PL_type_error("trie", t);
+
+  return FALSE;
+}
+
+
+int
+get_trie_noex(term_t t, trie **tp)
+{ void *data;
+  PL_blob_t *type;
+
+  if ( PL_get_blob(t, &data, NULL, &type) && type == &trie_blob )
+  { tref *ref = data;
+
+    *tp = ref->trie;
+    return TRUE;
+  }
 
   return FALSE;
 }
@@ -881,7 +926,8 @@ PRED_IMPL("trie_destroy", 1, trie_destroy, 0)
 { trie *trie;
 
   if ( get_trie(A1, &trie) )
-  { trie_empty(trie);
+  { trie->magic = TRIE_CMAGIC;
+    trie_empty(trie);
 
     return TRUE;
   }
@@ -894,15 +940,19 @@ PRED_IMPL("trie_destroy", 1, trie_destroy, 0)
 
 static word
 intern_value(term_t value ARG_LD)
-{ Word vp = valTermRef(value);
+{ if ( value )
+  { Word vp = valTermRef(value);
 
-  assert((TAG_INTEGER&0x3) && (TAG_ATOM&0x3));
+    DEBUG(0, assert((TAG_INTEGER&0x3) && (TAG_ATOM&0x3)));
 
-  deRef(vp);
-  if ( isAtom(*vp) || isTaggedInt(*vp) )
-    return *vp;
+    deRef(vp);
+    if ( isAtom(*vp) || isTaggedInt(*vp) )
+      return *vp;
 
-  return (word)PL_record(value);
+    return (word)PL_record(value);
+  } else
+  { return ATOM_trienode;
+  }
 }
 
 
@@ -962,6 +1012,7 @@ set_trie_value_word(trie *trie, trie_node *node, word val)
       acquire_key(val);
       node->value = val;
       release_value(old);
+      trie_discard_clause(trie);
 
       return TRUE;
     } else
@@ -971,6 +1022,7 @@ set_trie_value_word(trie *trie, trie_node *node, word val)
   { acquire_key(val);
     node->value = val;
     ATOMIC_INC(&trie->value_count);
+    trie_discard_clause(trie);
 
     return TRUE;
   }
@@ -987,17 +1039,35 @@ set_trie_value(trie *trie, trie_node *node, term_t value ARG_LD)
   return TRUE;
 }
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Delete a node from the trie. There are   two options: (1) simply set the
+value to 0 or (2), prune the branch   leading to this cell upwards until
+we find another existing node.
+
+TBD: create some sort of  lingering   mechanism  to allow for concurrent
+delete and gen_trie(). More modest: link up the deleted nodes and remove
+them after the references drop to 0.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 void
 trie_delete(trie *trie, trie_node *node, int prune)
 { if ( node->value )
-  { if ( prune )
+  { if ( prune && trie->references == 0 )
     { prune_node(trie, node);
     } else
-    { word v = node->value;
-      node->value = 0;
-      release_value(v);
+    { word v;
+
+      if ( trie->release_node )
+	(*trie->release_node)(trie, node);
+
+      if ( (v=node->value) )
+      { node->value = 0;
+	release_value(v);
+      }
     }
     ATOMIC_DEC(&trie->value_count);
+    trie_discard_clause(trie);
   }
 }
 
@@ -1021,9 +1091,21 @@ trie_insert(term_t Trie, term_t Key, term_t Value, trie_node **nodep,
     trie_node *node;
     int rc;
 
+    if ( false(trie, TRIE_ISMAP|TRIE_ISSET) )
+    { if ( Value )
+	set(trie, TRIE_ISMAP);
+      else
+	set(trie, TRIE_ISSET);
+    } else
+    { if ( (Value  && false(trie, TRIE_ISMAP)) ||
+	   (!Value && false(trie, TRIE_ISSET)) )
+      { return PL_permission_error("insert", "trie", Trie);
+      }
+    }
+
     kp	= valTermRef(Key);
 
-    if ( (rc=trie_lookup(trie, &node, kp, TRUE PASS_LD)) == TRUE )
+    if ( (rc=trie_lookup(trie, &node, kp, TRUE, NULL PASS_LD)) == TRUE )
     { word val = intern_value(Value PASS_LD);
 
       if ( nodep )
@@ -1037,6 +1119,7 @@ trie_insert(term_t Trie, term_t Key, term_t Value, trie_node **nodep,
 	    acquire_key(val);
 	    node->value = val;
 	    release_value(old);
+	    trie_discard_clause(trie);
 	  } else if ( isRecord(val) )
 	  { PL_erase((record_t)val);
 	  }
@@ -1054,6 +1137,7 @@ trie_insert(term_t Trie, term_t Key, term_t Value, trie_node **nodep,
       acquire_key(val);
       node->value = val;
       ATOMIC_INC(&trie->value_count);
+      trie_discard_clause(trie);
 
       return TRUE;
     }
@@ -1080,6 +1164,23 @@ PRED_IMPL("trie_insert", 3, trie_insert, 0)
 
   return trie_insert(A1, A2, A3, NULL, FALSE PASS_LD);
 }
+
+/**
+ * trie_insert(+Trie, +Key) is semidet.
+ *
+ * True if Key was added as a new key to the trie.  False if Key was
+ * already in the trie.
+ *
+ * @error permission_error if Key was associated with a different value
+ */
+
+static
+PRED_IMPL("trie_insert", 2, trie_insert, 0)
+{ PRED_LD
+
+  return trie_insert(A1, A2, 0, NULL, FALSE PASS_LD);
+}
+
 
 /**
  * trie_update(+Trie, +Key, +Value) is semidet.
@@ -1131,11 +1232,10 @@ PRED_IMPL("trie_delete", 3, trie_delete, 0)
 
     kp = valTermRef(A2);
 
-    if ( (rc=trie_lookup(trie, &node, kp, FALSE PASS_LD)) == TRUE )
+    if ( (rc=trie_lookup(trie, &node, kp, FALSE, NULL PASS_LD)) == TRUE )
     { if ( node->value )
       { if ( unify_value(A3, node->value PASS_LD) )
-	{ prune_node(trie, node);
-	  ATOMIC_DEC(&trie->value_count);
+	{ trie_delete(trie, node, TRUE);
 	  return TRUE;
 	}
       }
@@ -1161,7 +1261,7 @@ PRED_IMPL("trie_lookup", 3, trie_lookup, 0)
 
     kp = valTermRef(A2);
 
-    if ( (rc=trie_lookup(trie, &node, kp, FALSE PASS_LD)) == TRUE )
+    if ( (rc=trie_lookup(trie, &node, kp, FALSE, NULL PASS_LD)) == TRUE )
     { if ( node->value )
 	return unify_value(A3, node->value PASS_LD);
       return FALSE;
@@ -1243,150 +1343,182 @@ find_var(ukey_state *state, size_t index)
 
 static int
 unify_key(ukey_state *state, word key ARG_LD)
-{ Word p;
+{ Word p = state->ptr;
 
-  if ( key == TRIE_KEY_POP )
-  { Word wp = *--aTop;
-    state->umode = ((int)(uintptr_t)wp & uwrite);
-    state->ptr   = (Word)((intptr_t)wp&~uwrite);
+  switch(tagex(key))
+  { case TAG_VAR|STG_LOCAL:			/* RESERVED_TRIE_VAL */
+    { size_t popn = IS_TRIE_KEY_POP(key);
+      Word wp;
 
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("U Popped %zd, mode=%d\n", state->ptr-gBase, state->umode));
-    return TRUE;
-  }
+      assert(popn);
+      aTop -= popn;
+      wp = *aTop;
+      state->umode = ((int)(uintptr_t)wp & uwrite);
+      state->ptr   = (Word)((intptr_t)wp&~uwrite);
 
-  p = state->ptr;
-  if ( state->umode == uread )
-    deRef(p);
+      DEBUG(MSG_TRIE_PUT_TERM,
+	    Sdprintf("U Popped(%zd) %zd, mode=%d\n",
+		     popn, state->ptr-gBase, state->umode));
+      return TRUE;
+    }
+    case TAG_ATOM|STG_GLOBAL:			/* functor */
+    { size_t arity = arityFunctor(key);
 
-  if ( tagex(key) == (TAG_ATOM|STG_GLOBAL) )
-  { size_t arity = arityFunctor(key);
+      DEBUG(MSG_TRIE_PUT_TERM,
+	    Sdprintf("U Pushed %s %zd, mode=%d\n",
+		     functorName(key), state->ptr+1-gBase, state->umode));
+      pushArgumentStack((Word)((intptr_t)(p + 1)|state->umode));
 
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("U Pushed %s %zd, mode=%d\n",
-		   functorName(key), state->ptr+1-gBase, state->umode));
-    pushArgumentStack((Word)((intptr_t)(state->ptr + 1)|state->umode));
+      if ( state->umode == uwrite )
+      { Word t;
 
-    if ( state->umode == uwrite )
-    { Word t;
-
-      if ( (t=allocGlobalNoShift(arity+1)) )
-      { t[0] = key;
-	*p = consPtr(t, TAG_COMPOUND|STG_GLOBAL);
-	state->ptr = &t[1];
-	return TRUE;
-      } else
-	return GLOBAL_OVERFLOW;
-    } else
-    { if ( canBind(*p) )
-      { state->umode = uwrite;
-
-	if ( isAttVar(*p) )
-	{ Word t;
-	  word w;
-	  size_t i;
-
-	  if ( (t=allocGlobalNoShift(arity+1)) )
-	  { if ( !hasGlobalSpace(0) )
-	      return overflowCode(0);
-	    w = consPtr(&t[0], TAG_COMPOUND|STG_GLOBAL);
-	    t[0] = key;
-	    for(i=0; i<arity; i++)
-	      setVar(t[i+1]);
-	    assignAttVar(p, &w PASS_LD);
-	    state->ptr = &t[1];
-	    return TRUE;
-	  } else
-	    return GLOBAL_OVERFLOW;
-	} else
-	{ Word t;
-
-	  if ( (t=allocGlobalNoShift(arity+1)) )
-	  { if ( unlikely(tTop+1 >= tMax) )
-	      return  TRAIL_OVERFLOW;
-	    t[0] = key;
-	    Trail(p, consPtr(t, TAG_COMPOUND|STG_GLOBAL));
-	    state->ptr = &t[1];
-	    return TRUE;
-	  } else
-	    return GLOBAL_OVERFLOW;
-	}
-      } else if ( isTerm(*p) )
-      { Functor f = valueTerm(*p);
-
-	if ( f->definition == key )
-	{ state->ptr = &f->arguments[0];
+	if ( (t=allocGlobalNoShift(arity+1)) )
+	{ t[0] = key;
+	  *p = consPtr(t, TAG_COMPOUND|STG_GLOBAL);
+	  state->ptr = &t[1];
 	  return TRUE;
 	} else
-	  return FALSE;
+	  return GLOBAL_OVERFLOW;
       } else
-      { return FALSE;
-      }
+      { deRef(p);
+
+	if ( canBind(*p) )
+	{ state->umode = uwrite;
+
+	  if ( isAttVar(*p) )
+	  { Word t;
+	    word w;
+	    size_t i;
+
+	    if ( (t=allocGlobalNoShift(arity+1)) )
+	    { if ( !hasGlobalSpace(0) )
+		return overflowCode(0);
+	      w = consPtr(&t[0], TAG_COMPOUND|STG_GLOBAL);
+	      t[0] = key;
+	      for(i=0; i<arity; i++)
+		setVar(t[i+1]);
+	      assignAttVar(p, &w PASS_LD);
+	      state->ptr = &t[1];
+	      return TRUE;
+	    } else
+	      return GLOBAL_OVERFLOW;
+	  } else
+	  { Word t;
+
+	    if ( (t=allocGlobalNoShift(arity+1)) )
+	    { if ( unlikely(tTop+1 >= tMax) )
+		return  TRAIL_OVERFLOW;
+	      t[0] = key;
+	      Trail(p, consPtr(t, TAG_COMPOUND|STG_GLOBAL));
+	      state->ptr = &t[1];
+	      return TRUE;
+	    } else
+	      return GLOBAL_OVERFLOW;
+	  }
+	} else if ( isTerm(*p) )
+	{ Functor f = valueTerm(*p);
+
+	  if ( f->definition == key )
+	  { state->ptr = &f->arguments[0];
+	    return TRUE;
+	  } else
+	    return FALSE;
+	} else
+	{ return FALSE;
+	}
+      } /*uread*/
     }
-  } else if ( tag(key) == TAG_VAR )
-  { size_t index = (size_t)(key>>LMASK_BITS);
-    Word *v = find_var(state, index);
+    assert(0);
+    case TAG_VAR:
+    { size_t index = (size_t)(key>>LMASK_BITS);
+      Word *v = find_var(state, index);
 
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  { char b1[64]; char b2[64];
-	    Sdprintf("var %zd at %s (v=%p, *v=%s)\n",
-		     index,
-		     print_addr(state->ptr,b1),
-		     v, print_addr(*v,b2));
-	  });
+      DEBUG(MSG_TRIE_PUT_TERM,
+	    { char b1[64]; char b2[64];
+	      Sdprintf("var %zd at %s (v=%p, *v=%s)\n",
+		       index,
+		       print_addr(state->ptr,b1),
+		       v, print_addr(*v,b2));
+	    });
 
-    if ( state->umode == uwrite )
-    { if ( !*v )
-      { setVar(*state->ptr);
-	*v = state->ptr;
+      if ( state->umode == uwrite )
+      { if ( !*v )
+	{ setVar(*state->ptr);
+	  *v = state->ptr;
+	} else
+	{ *state->ptr = makeRefG(*v);
+	}
       } else
-      { *state->ptr = makeRefG(*v);
-      }
-    } else
-    { if ( !*v )
-      { *v = state->ptr;
-      } else
-      { int rc;
+      { deRef(p);
 
-	if ( (rc=unify_ptrs(state->ptr, *v, ALLOW_RETCODE PASS_LD)) != TRUE )
-	  return rc;
+	if ( !*v )
+	{ *v = state->ptr;
+	} else
+	{ int rc;
+
+	  if ( (rc=unify_ptrs(state->ptr, *v, ALLOW_RETCODE PASS_LD)) != TRUE )
+	    return rc;
+	}
       }
+
+      break;
     }
+    assert(0);
+    case STG_GLOBAL|TAG_INTEGER:		/* indirect data */
+    case STG_GLOBAL|TAG_STRING:
+    case STG_GLOBAL|TAG_FLOAT:
+    { word w;
 
-    state->ptr++;
-    return TRUE;
-  } else
-  { word w;
-
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("%s at %s\n",
-		   print_val(key, NULL), print_addr(state->ptr,NULL)));
-
-    if ( isIndirect(key) )
-    { w = extern_indirect_no_shift(state->trie->indirects, key PASS_LD);
+      w = extern_indirect_no_shift(state->trie->indirects, key PASS_LD);
       if ( !w )
 	return GLOBAL_OVERFLOW;
-    } else
-      w = key;
 
-    if ( state->umode == uwrite )
-    { if ( isAtom(w) )
-	pushVolatileAtom(w);
-      *p = w;
-    } else if ( canBind(*p) )
-    { if ( isAtom(w) )
-	pushVolatileAtom(w);
+      if ( state->umode == uwrite )
+      { *p = w;
+      } else
+      { deRef(p);
 
-      if ( hasGlobalSpace(0) )
-	bindConst(p, w);
-      else
-	return overflowCode(0);
-    } else if ( *p != w )
-      return FALSE;
+	if ( canBind(*p) )
+	{ if ( hasGlobalSpace(0) )
+	    bindConst(p, w);
+	  else
+	    return overflowCode(0);
+	} else
+	{ if ( !equalIndirect(w, *p) )
+	    return FALSE;
+	}
+      }
 
-    state->ptr++;
-    return TRUE;
+      break;
+    }
+    case TAG_ATOM:
+      pushVolatileAtom(key);
+      /*FALLTHROUGH*/
+    case TAG_INTEGER:
+    { if ( state->umode == uwrite )
+      { *p = key;
+      } else
+      { deRef(p);
+
+	if ( canBind(*p) )
+	{ if ( hasGlobalSpace(0) )
+	    bindConst(p, key);
+	  else
+	    return overflowCode(0);
+	} else
+	{ if ( *p != key )
+	    return FALSE;
+	}
+      }
+      break;
+    }
+    default:
+      assert(0);
   }
+
+  state->ptr++;
+
+  return TRUE;
 }
 
 
@@ -1401,10 +1533,23 @@ typedef struct trie_choice
 
 typedef struct
 { trie        *trie;		/* trie we operate on */
-  int	       allocated;
+  int	       allocated;	/* If TRUE, the state is persistent */
   tmp_buffer   choicepoints;	/* Stack of trie state choicepoints */
 } trie_gen_state;
 
+typedef struct desc_tstate
+{ Word  term;
+  size_t size;
+} desc_tstate;
+
+typedef struct
+{ Word	       term;		/* Term we are descending */
+  size_t       size;		/* Size of the current node */
+  int	       compound;	/* Initialized for compound */
+  int	       prune;		/* Use for pruning */
+  segstack     stack;		/* Stack for argument handling */
+  desc_tstate  buffer[64];	/* Quick buffer for stack */
+} descent_state;
 
 static void
 init_trie_state(trie_gen_state *state, trie *trie)
@@ -1437,35 +1582,133 @@ clear_trie_state(trie_gen_state *state)
 }
 
 
+static void
+clear_descent_state(descent_state *dstate)
+{ if ( dstate->compound )
+    clearSegStack(&dstate->stack);
+}
+
+static int
+get_key(trie_gen_state *state, descent_state *dstate, word *key ARG_LD)
+{ Word p;
+
+  deRef2(dstate->term, p);
+
+  if ( canBind(*p) )
+  { return FALSE;
+  } else if ( isTerm(*p) )
+  { Functor f = valueTerm(*p);
+    desc_tstate dts;
+
+    *key = f->definition;
+    if ( dstate->size > 1 )
+    { if ( !dstate->compound )
+      { dstate->compound = TRUE;
+	initSegStack(&dstate->stack, sizeof(desc_tstate),
+		     sizeof(dstate->buffer), dstate->buffer);
+      }
+      dts.term = dstate->term+1;
+      dts.size = dstate->size-1;
+      pushSegStack(&dstate->stack, dts, desc_tstate);
+      DEBUG(MSG_TRIE_GEN,
+	    Sdprintf("Pushed %p, size %zd\n", dts.term, dts.size));
+    }
+    dstate->term = &f->arguments[0];
+    dstate->size = arityFunctor(f->definition);
+    return TRUE;
+  } else
+  { dstate->term++;
+    dstate->size--;
+
+    if ( isIndirect(*p) )
+    { *key = trie_intern_indirect(state->trie, *p, FALSE PASS_LD);
+      return *key != 0;
+    } else
+    { *key = *p;
+      return TRUE;
+    }
+  }
+}
+
+
 trie_choice *
-add_choice(trie_gen_state *state, trie_node *node)
+add_choice(trie_gen_state *state, descent_state *dstate, trie_node *node ARG_LD)
 { trie_children children = node->children;
-  trie_choice *ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
+  trie_choice *ch;
+  int has_key;
+  word k;
+
+  DEBUG(MSG_TRIE_GEN,
+	{ Word p;
+	  deRef2(dstate->term, p);
+	  Sdprintf("add_choice() for %s\n", print_val(*p, NULL));
+	});
+
+  if ( dstate->prune )
+  { if ( !(has_key = get_key(state, dstate, &k PASS_LD)) )
+      dstate->prune = FALSE;
+  } else
+    has_key = FALSE;
 
   if ( children.any )
   { switch( children.any->type )
     { case TN_KEY:
-      {	word key   = children.key->key;
+	if ( !has_key ||
+	     k == children.key->key ||
+	     tagex(children.key->key) == TAG_VAR ||
+	     IS_TRIE_KEY_POP(children.key->key) )
+	{ word key   = children.key->key;
 
-	ch->key    = key;
-	ch->child  = children.key->child;
-        ch->choice.any = NULL;
-	break;
-      }
+	  if ( tagex(children.key->key) == TAG_VAR )
+	    dstate->prune = FALSE;
+
+	  ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
+	  ch->key    = key;
+	  ch->child  = children.key->child;
+	  ch->choice.any = NULL;
+
+	  if ( IS_TRIE_KEY_POP(children.key->key) && dstate->compound )
+	  { desc_tstate dts;
+	    popSegStack(&dstate->stack, &dts, desc_tstate);
+	    dstate->term = dts.term;
+	    dstate->size = dts.size;
+	    DEBUG(MSG_TRIE_GEN,
+		  Sdprintf("Popped %p, left %zd\n", dstate->term, dstate->size));
+	  }
+	  break;
+	} else
+	{ DEBUG(MSG_TRIE_GEN, Sdprintf("Failed\n"));
+	  return NULL;
+	}
       case TN_HASHED:
-      { void *k, *v;
+	if ( has_key && children.hash->var_keys == 0 )
+	{ trie_node *child;
 
-	ch->choice.table = newTableEnum(children.hash->table);
-        advanceTableEnum(ch->choice.table, &k, &v);
-	ch->key   = (word)k;
-	ch->child = (trie_node*)v;
+	  if ( (child = lookupHTable(children.hash->table, (void*)k)) )
+	  { ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
+	    ch->key = k;
+	    ch->child = child;
+	    ch->choice.any = NULL;
+	  } else
+	    return NULL;
+	} else
+	{ void *k, *v;
+
+	  dstate->prune = FALSE;
+	  ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
+	  ch->choice.table = newTableEnum(children.hash->table);
+	  advanceTableEnum(ch->choice.table, &k, &v);
+	  ch->key   = (word)k;
+	  ch->child = (trie_node*)v;
+	}
 	break;
-      }
       default:
 	assert(0);
+        return NULL;
     }
   } else
-  { memset(ch, 0, sizeof(*ch));
+  { ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
+    memset(ch, 0, sizeof(*ch));
     ch->child = node;
   }
 
@@ -1473,13 +1716,13 @@ add_choice(trie_gen_state *state, trie_node *node)
 }
 
 
-static int
-descent_node(trie_gen_state *state, trie_choice *ch)
-{ while( ch->child->children.any )
-  { ch = add_choice(state, ch->child);
+static trie_choice *
+descent_node(trie_gen_state *state, descent_state *dstate, trie_choice *ch ARG_LD)
+{ while( ch && ch->child->children.any )
+  { ch = add_choice(state, dstate, ch->child PASS_LD);
   }
 
-  return ch->child->value != 0;
+  return ch;
 }
 
 
@@ -1500,15 +1743,14 @@ advance_node(trie_choice *ch)
 }
 
 
-static int
-next_choice(trie_gen_state *state)
+static trie_choice *
+next_choice0(trie_gen_state *state, descent_state *dstate ARG_LD)
 { trie_choice *btm = base_choice(state);
   trie_choice  *ch = top_choice(state)-1;
 
   while(ch >= btm)
-  { if ( advance_node(ch) &&
-	 descent_node(state, ch) )
-      return TRUE;
+  { if ( advance_node(ch) )
+      return descent_node(state, dstate, ch PASS_LD);
 
     if ( ch->choice.table )
       freeTableEnum(ch->choice.table);
@@ -1517,7 +1759,31 @@ next_choice(trie_gen_state *state)
     ch--;
   }
 
-  return FALSE;
+  return NULL;
+}
+
+
+static trie_choice *
+next_choice(trie_gen_state *state ARG_LD)
+{ trie_choice *ch;
+  descent_state dstate;
+
+  dstate.prune    = FALSE;
+  dstate.compound = FALSE;
+
+  do
+  { ch = next_choice0(state, &dstate PASS_LD);
+  } while (ch && ch->child->value == 0);
+
+  return ch;
+}
+
+
+static trie_node *
+gen_state_leaf(trie_gen_state *state)
+{ trie_choice *top = top_choice(state);
+
+  return top[-1].child;
 }
 
 
@@ -1557,7 +1823,6 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
   trie_gen_state state_buf;
   trie_gen_state *state;
   trie_node *n;
-  fid_t fid;
 
   switch( CTX_CNTRL )
   { case FRG_FIRST_CALL:
@@ -1565,11 +1830,26 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
 
       if ( get_trie(Trie, &trie) )
       { if ( trie->root.children.any )
-	{ acquire_trie(trie);
+	{ trie_choice *ch;
+	  descent_state dstate;
+	  int rc;
+
+	  TRIE_STAT_INC(trie, gen_call);
+
+	  dstate.term     = valTermRef(Key);
+	  dstate.size     = 1;
+	  dstate.compound = FALSE;
+	  dstate.prune	  = TRUE;
+	  deRef(dstate.term);
+
+	  acquire_trie(trie);
 	  state = &state_buf;
 	  init_trie_state(state, trie);
-	  if ( !descent_node(state, add_choice(state, &trie->root)) &&
-	       !next_choice(state) )
+	  rc = ( (ch = add_choice(state, &dstate, &trie->root PASS_LD)) &&
+		 (ch = descent_node(state, &dstate, ch PASS_LD)) &&
+		 (ch->child->value || next_choice(state PASS_LD)) );
+	  clear_descent_state(&dstate);
+	  if ( !rc )
 	  { clear_trie_state(state);
 	    return FALSE;
 	  }
@@ -1580,7 +1860,13 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
     }
     case FRG_REDO:
       state = CTX_PTR;
-      break;
+      if ( gen_state_leaf(state)->value ||
+	   next_choice(state PASS_LD) )		/* pending choice was deleted */
+      { break;
+      } else
+      { clear_trie_state(state);
+	return FALSE;
+      }
     case FRG_CUTTED:
       state = CTX_PTR;
       clear_trie_state(state);
@@ -1590,15 +1876,17 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
       return FALSE;
   }
 
-  fid = PL_open_foreign_frame();
-  for( ; !isEmptyBuffer(&state->choicepoints); next_choice(state) )
-  { int rc;
+  Mark(fli_context->mark);
+  for( ; !isEmptyBuffer(&state->choicepoints); next_choice(state PASS_LD) )
+  { for(;;)
+    { int rc;
+      size_t asize = aTop - aBase; /* using the argument stack may be dubious */
 
-    for(;;)
-    { if ( (rc=unify_trie_path(Key, &n, state PASS_LD)) == TRUE )
+      if ( (rc=unify_trie_path(Key, &n, state PASS_LD)) == TRUE )
 	break;
 
-      PL_rewind_foreign_frame(fid);
+      aTop = aBase+asize;
+      Undo(fli_context->mark);
       if ( rc == FALSE )
 	goto next;
 
@@ -1613,11 +1901,11 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
 
     if ( (!Value || unify_value(Value, n->value PASS_LD)) &&
 	 (!Data  || unify_data(Data, n, ctx PASS_LD)) )
-    { if ( next_choice(state) )
+    { if ( next_choice(state PASS_LD) )
       { if ( !state->allocated )
 	{ trie_gen_state *nstate = allocForeignState(sizeof(*state));
 	  TmpBuffer nchp = &nstate->choicepoints;
-	  TmpBuffer ochp =  &state->choicepoints;
+	  TmpBuffer ochp = &state->choicepoints;
 
 	  nstate->trie = state->trie;
 	  nstate->allocated = TRUE;
@@ -1634,21 +1922,19 @@ trie_gen(term_t Trie, term_t Key, term_t Value,
 
 	  state = nstate;
 	}
-	PL_close_foreign_frame(fid);
 	ForeignRedoPtr(state);
       } else
       { clear_trie_state(state);
-	PL_close_foreign_frame(fid);
 	return TRUE;
       }
     } else
-      PL_rewind_foreign_frame(fid);
+    { Undo(fli_context->mark);
+    }
 
 next:;
   }
 
   clear_trie_state(state);
-  PL_close_foreign_frame(fid);
   return FALSE;
 }
 
@@ -1682,8 +1968,23 @@ PRED_IMPL("$trie_property", 2, trie_property, 0)
 { PRED_LD
   trie *trie;
 
+#ifdef O_TRIE_STATS
+  static atom_t ATOM_lookup_count = 0;
+  static atom_t ATOM_gen_call_count = 0;
+  static atom_t ATOM_invalidated = 0;
+  static atom_t ATOM_reevaluated = 0;
+
+  if ( !ATOM_lookup_count )
+  { ATOM_lookup_count   = PL_new_atom("lookup_count");
+    ATOM_gen_call_count = PL_new_atom("gen_call_count");
+    ATOM_invalidated    = PL_new_atom("invalidated");
+    ATOM_reevaluated    = PL_new_atom("reevaluated");
+  }
+#endif
+
   if ( get_trie(A1, &trie) )
   { atom_t name; size_t arity;
+    idg_node *idg;
 
     if ( PL_get_name_arity(A2, &name, &arity) && arity == 1 )
     { term_t arg = PL_new_term_ref();
@@ -1697,11 +1998,39 @@ PRED_IMPL("$trie_property", 2, trie_property, 0)
       } else if ( name == ATOM_size )
       { trie_stats stats;
 	stat_trie(trie, &stats);
+	if ( stats.nodes != trie->node_count )
+	  Sdprintf("OOPS: trie_property/2: counted %zd nodes, admin says %zd\n",
+		   stats.nodes, trie->node_count);
+	if ( stats.values != trie->value_count )
+	  Sdprintf("OOPS: trie_property/2: counted %zd values, admin says %zd\n",
+		   stats.values, trie->value_count);
+	// assert(stats.nodes  == trie->node_count);
+	// assert(stats.values == trie->value_count);
 	return PL_unify_int64(arg, stats.bytes);
+      } else if ( name == ATOM_compiled_size )
+      { atom_t dbref;
+	if ( (dbref = trie->clause) )
+	{ ClauseRef cref = clause_clref(dbref);
+	  if ( cref )
+	  { size_t sz = sizeofClause(cref->value.clause->code_size);
+	    return PL_unify_int64(arg, sz);
+	  }
+	}
+	return FALSE;
       } else if ( name == ATOM_hashed )
       { trie_stats stats;
 	stat_trie(trie, &stats);
 	return PL_unify_int64(arg, stats.hashes);
+#ifdef O_TRIE_STATS
+      } else if ( name == ATOM_lookup_count )
+      { return PL_unify_int64(arg, trie->stats.lookups);
+      } else if ( name == ATOM_gen_call_count)
+      { return PL_unify_int64(arg, trie->stats.gen_call);
+      } else if ( name == ATOM_invalidated && (idg=trie->data.IDG))
+      { return PL_unify_int64(arg, idg->stats.invalidated);
+      } else if ( name == ATOM_reevaluated && (idg=trie->data.IDG))
+      { return PL_unify_int64(arg, idg->stats.reevaluated);
+#endif
       }
     }
   }
@@ -1709,6 +2038,468 @@ PRED_IMPL("$trie_property", 2, trie_property, 0)
   return FALSE;
 }
 
+		 /*******************************
+		 *	  COMPILED TRIES	*
+		 *******************************/
+
+typedef struct trie_compile_state
+{ trie	       *trie;				/* Trie we are working on */
+  int		try;				/* There are alternatives */
+  tmp_buffer	codes;				/* Output instructions */
+  size_t	else_loc;			/* last else */
+  size_t	maxvar;				/* Highest var index */
+} trie_compile_state;
+
+static void
+init_trie_compile_state(trie_compile_state *state, trie *trie)
+{ memset(state, 0, sizeof(*state));
+  state->trie = trie;
+  initBuffer(&state->codes);
+  state->maxvar = 0;
+}
+
+static void
+clean_trie_compile_state(trie_compile_state *state)
+{ discardBuffer(&state->codes);
+}
+
+
+static void
+add_vmi(trie_compile_state *state, vmi c)
+{ addBuffer(&state->codes, encode(c), code);
+}
+
+static void
+add_vmi_d(trie_compile_state *state, vmi c, code d)
+{ addBuffer(&state->codes, encode(c), code);
+  addBuffer(&state->codes, d, code);
+}
+
+static void
+add_vmi_else_d(trie_compile_state *state, vmi c, code d)
+{ size_t el;
+
+  addBuffer(&state->codes, encode(c), code);
+  el = entriesBuffer(&state->codes, code);
+  addBuffer(&state->codes, (code)state->else_loc, code);
+  state->else_loc = el;
+  addBuffer(&state->codes, d, code);
+}
+
+static void
+fixup_else(trie_compile_state *state)
+{ Code base = baseBuffer(&state->codes, code);
+  size_t pc = entriesBuffer(&state->codes, code);
+  size_t el = state->else_loc;
+
+  state->else_loc = base[el];
+  base[el] = pc-el-1;
+}
+
+
+static int
+compile_trie_value(Word v, trie_compile_state *state ARG_LD)
+{ term_agenda_P agenda;
+  size_t var_number = 0;
+  tmp_buffer varb;
+  int rc = TRUE;
+  int compounds = 0;
+  Word p;
+
+  initTermAgenda_P(&agenda, 1, v);
+  while( (p=nextTermAgenda_P(&agenda)) )
+  { size_t popn;
+
+    if ( (popn = IS_AC_TERM_POP(p)) )
+    { if ( popn == 1 )
+	add_vmi(state, T_POP);
+      else
+	add_vmi_d(state, T_POPN, (code)popn);
+    } else
+    { word w = *p;
+
+      switch( tag(w) )
+      { case TAG_VAR:
+	{ size_t index;
+
+	  if ( isVar(w) )
+	  { if ( var_number++ == 0 )
+	    { initBuffer(&varb);
+	    }
+	    addBuffer(&varb, p, Word);
+	    *p = w = ((((word)var_number))<<LMASK_BITS)|TAG_VAR;
+	  }
+	  index = (size_t)(w>>LMASK_BITS);
+	  if ( index > state->maxvar )
+	    state->maxvar = index;
+	  add_vmi_d(state, T_VAR, (code)index);
+	  break;
+	}
+	case TAG_ATTVAR:
+	  rc = TRIE_LOOKUP_CONTAINS_ATTVAR;
+	  goto out;
+	case TAG_ATOM:			/* TBD: register */
+	  add_vmi_d(state, T_ATOM, (code)w);
+	  break;
+	case TAG_INTEGER:
+	  if ( storage(w) == STG_INLINE)
+	  { add_vmi_d(state, T_SMALLINT, (code)w);
+	  } else
+	  { size_t wsize = wsizeofIndirect(w);
+	    Word ip = valIndirectP(w);
+
+	    if ( wsize == sizeof(int64_t)/sizeof(word))
+	    {
+#if SIZEOF_VOIDP == 8
+	      add_vmi_d(state, T_INTEGER, (code)ip[0]);
+#else
+	      add_vmi_d(state, T_INT64, (code)ip[0]);
+	      addBuffer(&state->codes, (code)ip[1], code);
+#endif
+#ifdef O_GMP
+	    } else
+	    { add_vmi_d(state, T_MPZ, (code)ip[-1]);
+	      addMultipleBuffer(&state->codes, ip, wsize, code);
+#endif
+	    }
+	  }
+	  break;
+	case TAG_FLOAT:
+	{ Word ip = valIndirectP(w);
+	  add_vmi_d(state, T_FLOAT, (code)ip[0]);
+#if SIZEOF_VOIDP == 4
+	  addBuffer(&state->codes, (code)ip[1], code);
+#endif
+          break;
+	}
+	case TAG_STRING:
+	{ size_t wsize = wsizeofIndirect(w);
+	  Word ip = valIndirectP(w);
+
+	  add_vmi_d(state, T_STRING, (code)ip[-1]);
+	  addMultipleBuffer(&state->codes, ip, wsize, code);
+	  break;
+	}
+	case TAG_COMPOUND:
+	{ Functor f = valueTerm(w);
+	  size_t arity = arityFunctor(f->definition);
+
+	  if ( ++compounds == 1000 && !is_acyclic(p PASS_LD) )
+	  { rc = TRIE_LOOKUP_CYCLIC;
+	    goto out;
+	  }
+	  add_vmi_d(state, T_FUNCTOR, (code)f->definition);
+	  pushWorkAgenda_P(&agenda, arity, f->arguments);
+	  break;
+	}
+      }
+    }
+  }
+out:
+  clearTermAgenda_P(&agenda);
+
+  if ( var_number )
+  { Word *pp = baseBuffer(&varb, Word);
+    Word *ep = topBuffer(&varb, Word);
+
+    for(; pp < ep; pp++)
+    { Word vp = *pp;
+      setVar(*vp);
+    }
+    discardBuffer(&varb);
+  }
+
+  return rc;
+}
+
+
+static int
+compile_trie_node(trie_node *n, trie_compile_state *state ARG_LD)
+{ trie_children children;
+  word key;
+  int rc;
+
+next:
+  children = n->children;
+  if ( n == &state->trie->root )
+    goto children;
+  key = n->key;
+
+  switch(tagex(key))
+  { case TAG_VAR|STG_LOCAL:			/* RESERVED_TRIE_VAL */
+    { size_t popn = IS_TRIE_KEY_POP(key);
+
+      assert(popn);
+      if ( popn == 1 )
+	add_vmi(state, T_POP);
+      else
+	add_vmi_d(state, T_POPN, (code)popn);
+      break;
+    }
+    case TAG_ATOM|STG_GLOBAL:			/* functor */
+    { if ( state->try )
+	add_vmi_else_d(state, T_TRY_FUNCTOR, (code)key);
+      else
+	add_vmi_d(state, T_FUNCTOR, (code)key);
+      break;
+    }
+    case TAG_VAR:
+    { size_t index = (size_t)(key>>LMASK_BITS);
+
+      if ( index > state->maxvar )
+	state->maxvar = index;
+
+      if ( state->try )
+	add_vmi_else_d(state, T_TRY_VAR, (code)index);
+      else
+	add_vmi_d(state, T_VAR, (code)index);
+      break;
+    }
+    case STG_GLOBAL|TAG_INTEGER:		/* indirect data */
+    case STG_GLOBAL|TAG_STRING:
+    case STG_GLOBAL|TAG_FLOAT:
+    { size_t index = key>>LMASK_BITS;
+      int idx = MSB(index);
+      indirect *h = &state->trie->indirects->array.blocks[idx][index];
+      size_t wsize = wsizeofInd(h->header);
+
+      switch(tag(key))
+      { case TAG_INTEGER:
+#if SIZEOF_VOIDP == 8
+	  if ( wsize == 1 )			/* 64-bit integer */
+	  { if ( state->try )
+	      add_vmi_else_d(state, T_TRY_INTEGER, (code)h->data[0]);
+	    else
+	      add_vmi_d(state, T_INTEGER, (code)h->data[0]);
+	    goto indirect_done;
+	  } else
+#else
+	  if ( wsize == 2 )			/* 64-bit integer */
+	  { if ( state->try )
+	      add_vmi_else_d(state, T_TRY_INT64, (code)h->data[0]);
+	    else
+	      add_vmi_d(state, T_INT64, (code)h->data[0]);
+	    addBuffer(&state->codes, (code)h->data[1], code);
+	    goto indirect_done;
+	  } else
+#endif
+	  { if ( state->try )
+	      add_vmi_else_d(state, T_TRY_MPZ, (code)h->header);
+	    else
+	      add_vmi_d(state, T_MPZ, (code)h->header);
+	  }
+	  break;
+        case TAG_STRING:
+	  if ( state->try )
+	    add_vmi_else_d(state, T_TRY_STRING, (code)h->header);
+	  else
+	    add_vmi_d(state, T_STRING, (code)h->header);
+	  break;
+        case TAG_FLOAT:
+	  if ( state->try )
+	    add_vmi_else_d(state, T_TRY_FLOAT, (code)h->data[0]);
+	  else
+	    add_vmi_d(state, T_FLOAT, (code)h->data[0]);
+#if SIZEOF_VOIDP == 4
+	  addBuffer(&state->codes, (code)h->data[1], code);
+#endif
+	  goto indirect_done;
+      }
+
+      addMultipleBuffer(&state->codes, h->data, wsize, code);
+    indirect_done:
+      break;
+    }
+    case TAG_ATOM:
+    { if ( state->try )
+	add_vmi_else_d(state, T_TRY_ATOM, (code)key);
+      else
+	add_vmi_d(state, T_ATOM, (code)key);
+      break;
+    }
+    case TAG_INTEGER:
+    { if ( state->try )
+	add_vmi_else_d(state, T_TRY_SMALLINT, (code)key);
+      else
+	add_vmi_d(state, T_SMALLINT, (code)key);
+      break;
+    }
+    default:
+      assert(0);
+  }
+
+children:
+  if ( children.any  )
+  { switch( children.any->type )
+    { case TN_KEY:
+      { state->try = FALSE;
+	n = children.key->child;
+	goto next;
+      }
+      case TN_HASHED:
+      { Table table = children.hash->table;
+	TableEnum e = newTableEnum(table);
+	void *k, *v;
+
+	if ( !advanceTableEnum(e, &k, &v) )
+	{ freeTableEnum(e);
+	  return TRUE;				/* empty path */
+	}
+
+	for(;;)
+	{ n = v;
+
+	  if ( !(state->try = advanceTableEnum(e, &k, &v)) )
+	  { freeTableEnum(e);
+	    goto next;
+	  }
+
+	  if ( (rc=compile_trie_node(n, state PASS_LD)) != TRUE )
+	  { freeTableEnum(e);
+	    return rc;
+	  }
+	  fixup_else(state);
+	}
+      }
+    }
+  } else
+  { if ( n->value )			/* what if we have none? */
+    { if ( answer_is_conditional(n) )
+	add_vmi_d(state, T_DELAY, (code)n);
+
+      if ( true(state->trie, TRIE_ISMAP) )
+      { add_vmi(state, T_VALUE);
+	if ( !isRecord(n->value) )
+	{ if ( isAtom(n->value) )
+	  { add_vmi_d(state, T_ATOM, (code)n->value);
+	  } else
+	  { add_vmi_d(state, T_SMALLINT, (code)n->value);
+	  }
+	} else
+	{ term_t t2;
+
+	  if ( (t2=PL_new_term_ref()) &&
+	       PL_recorded((record_t)n->value, t2) )
+	  { Word p = valTermRef(t2);
+
+	    deRef(p);
+	    if ( (rc = compile_trie_value(p, state PASS_LD)) != TRUE )
+	      return rc;
+	  } else
+	  { return FALSE;
+	  }
+	  PL_reset_term_refs(t2);
+	}
+      }
+      add_vmi(state, I_EXIT);
+    } else
+    { add_vmi(state, I_FAIL);
+      if ( n == &state->trie->root )
+	add_vmi(state, I_EXIT);	/* make sure the clause ends with I_EXIT */
+    }
+  }
+
+  return TRUE;
+}
+
+
+static int
+create_trie_clause(Definition def, Clause *cp, trie_compile_state *state)
+{ size_t code_size = entriesBuffer(&state->codes, code);
+  size_t size      = sizeofClause(code_size);
+  //size_t clsize    = size + SIZEOF_CREF_CLAUSE;
+  Clause cl;
+
+  cl = PL_malloc_atomic(size);
+  memset(cl, 0, sizeof(*cl));
+  cl->predicate = def;
+  cl->code_size = code_size;
+  cl->prolog_vars = TRIE_VAR_OFFSET + state->maxvar;
+  cl->variables = cl->prolog_vars;	/* 2: pseudo arity */
+  set(cl, UNIT_CLAUSE);			/* no body */
+  memcpy(cl->codes, baseBuffer(&state->codes, code), sizeOfBuffer(&state->codes));
+  *cp = cl;
+
+  ATOMIC_ADD(&GD->statistics.codes, cl->code_size);
+  ATOMIC_INC(&GD->statistics.clauses);
+
+  return TRUE;
+}
+
+
+atom_t
+compile_trie(Definition def, trie *trie ARG_LD)
+{ atom_t dbref;
+
+retry:
+  if ( !(dbref = trie->clause) )
+  { if ( trie->value_count == 0 )
+    { dbref = ATOM_fail;
+      if ( !COMPARE_AND_SWAP(&trie->clause, 0, dbref) )
+	goto retry;
+    } else
+    { trie_compile_state state;
+      Clause cl;
+      ClauseRef cref;
+
+      init_trie_compile_state(&state, trie);
+      add_vmi(&state, def->functor->arity == 2 ? T_TRIE_GEN2 : T_TRIE_GEN3);
+      if ( compile_trie_node(&trie->root, &state PASS_LD) &&
+	   create_trie_clause(def, &cl, &state) )
+      { cref = assertDefinition(def, cl, CL_END PASS_LD);
+	if ( cref )
+	{ dbref = lookup_clref(cref->value.clause);
+	  if ( !COMPARE_AND_SWAP(&trie->clause, 0, dbref) )
+	  { PL_unregister_atom(dbref);
+	    retractClauseDefinition(def, cref->value.clause);
+	    goto retry;
+	  }
+	}
+      }
+      assert(state.else_loc == 0);
+      clean_trie_compile_state(&state);
+    }
+  }
+
+  return dbref;
+}
+
+
+static
+PRED_IMPL("$trie_compile", 2, trie_compile, 0)
+{ PRED_LD
+  trie *trie;
+
+  if ( get_trie(A1, &trie) )
+  { Procedure proc = (true(trie, TRIE_ISMAP)
+			     ? GD->procedures.trie_gen_compiled3
+			     : GD->procedures.trie_gen_compiled2);
+    atom_t clref = compile_trie(proc->definition, trie PASS_LD);
+
+    return _PL_unify_atomic(A2, clref);
+  }
+
+  return FALSE;
+}
+
+
+static void
+set_trie_clause_general_undefined(Clause clause)
+{ Code PC, ep;
+
+  PC = clause->codes;
+  ep = PC + clause->code_size;
+
+  for( ; PC < ep; PC = stepPC(PC) )
+  { code c = fetchop(PC);
+
+    switch(c)
+    { case T_DELAY:
+	PC[1] = (code)NULL;
+        break;
+    }
+  }
+}
 
 		 /*******************************
 		 *      PUBLISH PREDICATES	*
@@ -1718,6 +2509,7 @@ BeginPredDefs(trie)
   PRED_DEF("is_trie",             1, is_trie,            0)
   PRED_DEF("trie_new",            1, trie_new,           0)
   PRED_DEF("trie_destroy",        1, trie_destroy,       0)
+  PRED_DEF("trie_insert",         2, trie_insert,        0)
   PRED_DEF("trie_insert",         3, trie_insert,        0)
   PRED_DEF("trie_insert",         4, trie_insert,        0)
   PRED_DEF("trie_update",         3, trie_update,        0)
@@ -1728,9 +2520,25 @@ BeginPredDefs(trie)
   PRED_DEF("trie_gen",            2, trie_gen,      PL_FA_NONDETERMINISTIC)
   PRED_DEF("$trie_gen_node",      3, trie_gen_node, PL_FA_NONDETERMINISTIC)
   PRED_DEF("$trie_property",      2, trie_property,      0)
+  PRED_DEF("$trie_compile",       2, trie_compile,       0)
 EndPredDefs
 
 void
 initTries(void)
-{ PL_register_blob_type(&trie_blob);
+{ Procedure proc;
+  Definition def;
+
+  PL_register_blob_type(&trie_blob);
+
+  proc = PL_predicate("trie_gen_compiled", 2, "system");
+  def = proc->definition;
+  set(def, P_LOCKED_SUPERVISOR|P_VOLATILE);
+  def->codes = SUPERVISOR(trie_gen);
+  GD->procedures.trie_gen_compiled2 = proc;
+
+  proc = PL_predicate("trie_gen_compiled", 3, "system");
+  def = proc->definition;
+  set(def, P_LOCKED_SUPERVISOR|P_VOLATILE);
+  def->codes = SUPERVISOR(trie_gen);
+  GD->procedures.trie_gen_compiled3 = proc;
 }

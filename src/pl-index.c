@@ -92,7 +92,7 @@ static void	deleteIndex(Definition def, ClauseList cl, ClauseIndex ci);
 static void	insertIndex(Definition def, ClauseList clist, ClauseIndex ci);
 static void	setClauseChoice(ClauseChoice chp, ClauseRef cref,
 				gen_t generation ARG_LD);
-static void	addClauseToIndex(ClauseIndex ci, Clause cl, ClauseRef where);
+static int	addClauseToIndex(ClauseIndex ci, Clause cl, ClauseRef where);
 static void	addClauseToListIndexes(Definition def, ClauseList cl,
 				       Clause clause, ClauseRef where);
 static void	insertIntoSparseList(ClauseRef cref,
@@ -464,6 +464,8 @@ retry:
 	  { chp->key = indexKeyFromArgv(ci, argv PASS_LD);
 	    assert(chp->key);
 	    best_index = ci;
+	  } else
+	  { goto retry;
 	  }
 	}
       }
@@ -504,12 +506,16 @@ retry:
 
       while ( ci->incomplete )
 	wait_for_index(ci);
+      if ( ci->invalid )
+	goto retry;
 
       chp->key = indexKeyFromArgv(ci, argv PASS_LD);
       assert(chp->key);
       hi = hashIndex(chp->key, ci->buckets);
       chp->cref = ci->entries[hi].head;
       return nextClauseFromBucket(ci, argv, ctx PASS_LD);
+    } else
+    { goto retry;
     }
   }
 
@@ -551,7 +557,7 @@ firstClause(Word argv, LocalFrame fr, Definition def, ClauseChoice chp ARG_LD)
   DEBUG(CHK_SECURE, assert(!cref || !chp->cref ||
 			   visibleClause(chp->cref->value.clause,
 					 generationFrame(fr))));
-  release_def();
+  release_def(def);
 
   return cref;
 }
@@ -576,7 +582,7 @@ nextClause__LD(ClauseChoice chp, Word argv, LocalFrame fr, Definition def ARG_LD
   } else
   { cref = nextClauseArg1(chp, generation PASS_LD);
   }
-  release_def();
+  release_def(def);
 
   DEBUG(CHK_SECURE,
 	assert(!cref || !chp->cref ||
@@ -764,11 +770,12 @@ addClauseToListIndexes(Definition def, ClauseList cl, Clause clause,
 
       while ( ci->incomplete )
 	wait_for_index(ci);
+      if ( ci->invalid )
+	return;
 
-      if ( ci->size >= ci->resize_above )
+      if ( ci->size >= ci->resize_above ||
+	   !addClauseToIndex(ci, clause, where) )
 	deleteIndexP(def, cl, cip);
-      else
-	addClauseToIndex(ci, clause, where);
     }
   }
 }
@@ -1392,6 +1399,8 @@ deleteActiveClauseFromIndexes(Definition def, Clause cl)
 
       while( ci->incomplete )
 	wait_for_index(ci);
+      if ( ci->invalid )
+	return;
 
       if ( true(def, P_DYNAMIC) )
       { if ( def->impl.clauses.number_of_clauses < ci->resize_below )
@@ -1447,7 +1456,7 @@ indexed. This is needed for resizing the index.
 TBD: Merge compound detection with skipToTerm()
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static void
+static int
 addClauseToIndex(ClauseIndex ci, Clause cl, ClauseRef where)
 { ClauseBucket ch = ci->entries;
   Code pc = NULL;
@@ -1455,7 +1464,9 @@ addClauseToIndex(ClauseIndex ci, Clause cl, ClauseRef where)
   word arg1key = 0;
 
   if ( ci->is_list )			/* find first argument key for term */
-  { switch(decode(*pc))
+  { if ( key == 0 )
+      return FALSE;
+    switch(decode(*pc))
     { case H_FUNCTOR:
       case H_LIST:
       case H_RFUNCTOR:
@@ -1476,6 +1487,8 @@ addClauseToIndex(ClauseIndex ci, Clause cl, ClauseRef where)
     DEBUG(MSG_INDEX_UPDATE, Sdprintf("Storing in bucket %d\n", hi));
     ci->size += addClauseBucket(&ch[hi], cl, key, arg1key, where, ci->is_list);
   }
+
+  return TRUE;
 }
 
 
@@ -1609,7 +1622,13 @@ hashDefinition(ClauseList clist, hash_hints *hints, IndexContext ctx)
 
   for(cref = clist->first_clause; cref; cref = cref->next)
   { if ( false(cref->value.clause, CL_ERASED) )
-      addClauseToIndex(ci, cref->value.clause, CL_END);
+    { if ( !addClauseToIndex(ci, cref->value.clause, CL_END) )
+      { ci->invalid = TRUE;
+	completed_index(ci);
+	deleteIndex(ctx->predicate, clist, ci);
+	return NULL;
+      }
+    }
   }
 
   ci->resize_above = ci->size*2;
@@ -1746,7 +1765,20 @@ replaceIndex(Definition def, ClauseList cl, ClauseIndex *cip, ClauseIndex ci)
 			  old, ci));
 
   if ( !ISDEADCI(old) )
+  { int i;
+					/* delete corresponding assessments */
+    for(i=0; i<MAX_MULTI_INDEX; i++)
+    { unsigned int a;
+
+      if ( (a=old->args[i]) )
+      { arg_info *ai = &cl->args[a-1];
+
+	ai->assessed = 0;
+      }
+    }
+
     linger(&def->lingering, unalloc_ci, old);
+  }
 
   if ( !isSortedIndexes(cl->clause_indexes) )
   { cip = copyIndex(cl->clause_indexes, 0);
@@ -1763,13 +1795,13 @@ deleteIndexP(Definition def, ClauseList cl, ClauseIndex *cip)
 
 
 static void
-deleteIndex(Definition def, ClauseList cl, ClauseIndex ci)
+deleteIndex(Definition def, ClauseList clist, ClauseIndex ci)
 { ClauseIndex *cip;
 
-  if ( (cip=def->impl.clauses.clause_indexes) )
+  if ( (cip=clist->clause_indexes) )
   { for(; *cip; cip++)
     { if ( *cip == ci )
-      { deleteIndexP(def, &def->impl.clauses, cip);
+      { deleteIndexP(def, clist, cip);
 	return;
       }
     }
@@ -2110,6 +2142,11 @@ compar_keys(const void *p1, const void *p2)
 Only the final call gets a clause_count > 0. Here we do the remainder of
 the assessment. We could consider  for   a  seperate  function to merely
 reduce the set.
+
+(*) Currently we cannot  combine  variables   with  functor  indexes  as
+firstClause() deterministically goes into the matching functor and after
+going into the recursive indexes  we  loose   the  context  to  find the
+unbound clause.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
@@ -2173,7 +2210,8 @@ assess_remove_duplicates(hash_assessment *a, size_t clause_count)
 		 a->size * a->var_count * SIZEOF_CREF_CLAUSE );
 
     if ( a->speedup < 0.8*(float)clause_count &&
-	 a->funct_count > 0 )
+	 a->funct_count > 0 &&
+	 a->var_count == 0 )		/* See (*) */
     { a->list = TRUE;
       a->space += a->size * SIZEOF_CREF_LIST;
     }

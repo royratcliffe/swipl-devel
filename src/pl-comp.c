@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2017, University of Amsterdam
+    Copyright (c)  1985-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -37,6 +38,7 @@
 #define _GNU_SOURCE			/* get dladdr() */
 #include "pl-incl.h"
 #include "pl-dbref.h"
+#include "pl-event.h"
 #include "pl-inline.h"
 #include <limits.h>
 #ifdef HAVE_DLADDR
@@ -552,24 +554,19 @@ resetVarDefs(int n ARG_LD)		/* set addresses of first N to NULL */
 void
 freeVarDefs(PL_local_data_t *ld)
 { if ( ld->comp.vardefs )
-  {
-#ifndef NDEBUG
-    GET_LD
-#endif
-    VarDef *vardefs = ld->comp.vardefs;
+  { VarDef *vardefs = ld->comp.vardefs;
     int i, count=ld->comp.nvardefs;
 
-    assert(LD==ld);
+    ld->comp.vardefs = NULL;
+    ld->comp.nvardefs = 0;
+    ld->comp.filledVars = 0;
 
     for(i=0; i<count; i++)
     { if ( vardefs[i] )
 	freeHeap(vardefs[i], sizeof(vardef));
     }
 
-    GC_FREE(ld->comp.vardefs);
-    ld->comp.vardefs = NULL;
-    ld->comp.nvardefs = 0;
-    ld->comp.filledVars = 0;
+    GC_FREE(vardefs);
   }
 }
 
@@ -1752,6 +1749,7 @@ Finish up the clause.
     memcpy(cl->codes, baseBuffer(&ci.codes, code), sizeOfBuffer(&ci.codes));
 
     ATOMIC_ADD(&GD->statistics.codes, clause.code_size);
+    ATOMIC_INC(&GD->statistics.clauses);
   } else
   { LocalFrame fr = lTop;
     Word p0 = argFrameP(fr, clause.variables);
@@ -4200,6 +4198,8 @@ argKey(Code PC, int skip, word *key)
       case I_EXITFACT:
       case I_EXIT:			/* fact */
       case I_ENTER:			/* fix H_VOID, H_VOID, I_ENTER */
+      case T_TRIE_GEN2:
+      case T_TRIE_GEN3:
 	*key = 0;
 	fail;
       case I_NOP:
@@ -4656,6 +4656,8 @@ decompile_head(Clause clause, term_t head, decompileInfo *di ARG_LD)
       case I_EXITFACT:
       case I_EXIT:			/* fact */
       case I_ENTER:			/* fix H_VOID, H_VOID, I_ENTER */
+      case T_TRIE_GEN2:
+      case T_TRIE_GEN3:
 	{ assert(argn <= arity);
 
 	  if ( argp )

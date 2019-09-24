@@ -8,14 +8,14 @@ set(DOC SWI-Prolog-${SWIPL_VERSION_STRING})
 # Libraries documented in .doc files
 set(DOC_LIB assoc.tex broadcast.tex clpb.tex clpfd.tex clpqr.tex gensym.tex
     library.tex libsummary.tex nbset.tex pio.tex predicateoptions.tex
-    prologxref.tex record.tex registry.tex simplex.tex
+    record.tex registry.tex simplex.tex
     ugraphs.tex wwwbrowser.tex)
 prepend(DOC_LIB lib/ ${DOC_LIB})
 
 set(FIGS broadcast by-sa profnode swipl xrefchatdep xrefchatfile)
 
 # Main files
-set(DOC_CORE intro.tex overview.tex builtin.tex module.tex
+set(DOC_CORE abstract.tex intro.tex overview.tex builtin.tex module.tex
     foreign.tex runtime.tex hack.tex summary.tex xpce.tex glossary.tex
     ide.tex license.tex threads.tex engines.tex profile.tex
     attvar.tex chr.tex xref.tex bit64.tex dialect.tex extensions.tex
@@ -139,7 +139,7 @@ endfunction()
 libsdoc(apply dicts error url pairs option optparse ordsets aggregate
         thread_pool charsio debug csv lists main check random varnumbers
         quasi_quotations solution_sequences iostream persistency yall
-        settings occurs ansi_term readutil)
+        settings occurs ansi_term readutil prolog_xref)
 libdoc(shlib --subsection)
 libdoc(pure_input --subsection)
 libdoc(explain --subsection)

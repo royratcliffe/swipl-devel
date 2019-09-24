@@ -66,7 +66,10 @@ user:term_expansion(begin_of_file, Out) :-
               | Out1
               ]
     ),
-    Out1 = [ (:- expects_dialect(xsb)) | Out2 ],
+    Out1 = [ (:- expects_dialect(xsb)),
+             (:- use_module(library(tables)))
+           | Out2
+           ],
     append(Extra, More, Out2),
     (   nonvar(Module)
     ->  setup_call_cleanup(
@@ -133,24 +136,38 @@ export_decl(PI) -->
 head_directive(File, import(from(Preds, From)),
                (:- xsb_import(Preds, From))) :-
     assertz(xsb:moved_directive(File, import(from(Preds, From)))).
-head_directive(File, table(Preds as Options), Clauses) :-
-    ignored_table_options(Options),
-    expand_term((:- table(Preds)), Clauses),
-    assertz(xsb:moved_directive(File, table(Preds as Options))).
+head_directive(File, table(Preds as XSBOptions), Clauses) :-
+    ignored_table_options(XSBOptions, Options),
+    (   Options == true
+    ->  expand_term((:- table(Preds)), Clauses)
+    ;   expand_term((:- table(Preds as Options)), Clauses)
+    ),
+    assertz(xsb:moved_directive(File, table(Preds as XSBOptions))).
 head_directive(File, table(Preds), Clauses) :-
     expand_term((:- table(Preds)), Clauses),
     assertz(xsb:moved_directive(File, table(Preds))).
 
-ignored_table_options((A,B)) :-
+ignored_table_options((A0,B0), Conj) :-
     !,
-    ignored_table_options(A),
-    ignored_table_options(B).
-ignored_table_options(variant) :-
+    ignored_table_options(A0, A),
+    ignored_table_options(B0, B),
+    mkconj(A, B, Conj).
+ignored_table_options(variant, variant) :-
     !.
-ignored_table_options(opaque) :-
+ignored_table_options(subsumptive, subsumptive) :-
     !.
-ignored_table_options(Option) :-
+ignored_table_options(incremental, incremental) :-
+    !.
+ignored_table_options(opaque, true) :-
+    !.
+ignored_table_options(shared, shared) :-
+    !.
+ignored_table_options(Option, true) :-
     print_message(warning, xsb(table_option_ignored(Option))).
+
+mkconj(true, X, X) :- !.
+mkconj(X, true, X) :- !.
+mkconj(X, Y, (X,Y)) :- !.
 
 %!  xsb_directives(+File, -Directives) is semidet.
 %

@@ -40,16 +40,23 @@
 
             str_cat/3,
 
+            parsort/4,                    % +List, +Spec, +Dupl, -Sorted
+
             term_type/2,
 
             xsb_expand_file_name/2,       % +File, -Expanded
             expand_filename_no_prepend/2, % FileName, -ExpandedName
             parse_filename/4,             % +FileName, -Dir, -Base, -Extension
 
+            conset/2,                     % +Term, +Value
+            conget/2,                     % +Term, -Value
+
+            xsb_backtrace/1,              % -Backtrace
             xwam_state/2                  % +Id, -Value
           ]).
 :- use_module(library(debug)).
 :- use_module(library(error)).
+:- use_module(library(prolog_stack)).
 
 %!  gc_heap
 %
@@ -77,6 +84,41 @@ str_cat(A, B, AB) :-
     must_be(atom, A),
     must_be(atom, B),
     atom_concat(A, B, AB).
+
+%!  parsort(+List, +Order, +Dupl, -Sorted) is det.
+%
+%   parsort/4 is a very general sorting routine.
+
+parsort(_List, Spec, _Dupl, _Sorted) :-
+    var(Spec),
+    !,
+    uninstantiation_error(Spec).
+parsort(_List, _Spec, Dupl, _Sorted) :-
+    var(Dupl),
+    !,
+    uninstantiation_error(Dupl).
+parsort(List, asc,  0, Sorted) :- !, sort(0, @<,  List, Sorted).
+parsort(List, asc,  _, Sorted) :- !, sort(0, @=<, List, Sorted).
+parsort(List, [],   0, Sorted) :- !, sort(0, @<,  List, Sorted).
+parsort(List, [],   _, Sorted) :- !, sort(0, @=<, List, Sorted).
+parsort(List, desc, 0, Sorted) :- !, sort(0, @>,  List, Sorted).
+parsort(List, desc, _, Sorted) :- !, sort(0, @>=, List, Sorted).
+parsort(List, SortSpec, Dupl, Sorted) :-
+    must_be(list, SortSpec),
+    reverse(SortSpec, Rev),
+    parsort_(Rev, Dupl, List, Sorted).
+
+parsort_([], _, List, List).
+parsort_([H|T], Dupl, List0, List) :-
+    parsort_1(H, Dupl, List0, List1),
+    parsort_(T, Dupl, List1, List).
+
+parsort_1(asc(I),  0, List, Sorted) :- !, sort(I, @<,  List, Sorted).
+parsort_1(asc(I),  _, List, Sorted) :- !, sort(I, @=<, List, Sorted).
+parsort_1(desc(I), 0, List, Sorted) :- !, sort(I, @>,  List, Sorted).
+parsort_1(desc(I), _, List, Sorted) :- !, sort(I, @>=, List, Sorted).
+parsort_1(Spec,  _, _, _) :-
+    domain_error(parsort_spec, Spec).
 
 %!  term_type(+Term, -Type:integer)
 %
@@ -151,6 +193,27 @@ ensure_slash(Dir, DirS) :-
 ensure_slash(Dir, DirS) :-
     atom_concat(Dir, '/', DirS).
 
+
+%!  conset(+Term, +Value) is det.
+%!  conget(+Term, -Value) is det.
+%
+%   Cheap set/get integer value associated with an atom. Seems this is a
+%   subset of what SWI-Prolog flags can do.
+
+conset(Name, Value) :-
+    set_flag(Name, Value).
+
+conget(Name, Value) :-
+    get_flag(Name, Value).
+
+%!  xsb_backtrace(-Backtrace)
+%
+%   Upon success Backtrace is  bound  to   a  structure  indicating  the
+%   forward continuations for  a  point   of  execution.  This structure
+%   should be treated as opaque.
+
+xsb_backtrace(Backtrace) :-
+    get_prolog_backtrace(25, Backtrace).
 
 %!  xwam_state(+Id, -Value)
 %

@@ -68,7 +68,6 @@
             xref_used_class/2,          % ?Source, ?ClassName
             xref_defined_class/3        % ?Source, ?ClassName, -How
           ]).
-:- use_module(library(debug), [debug/3]).
 :- use_module(library(lists), [append/3, append/2, member/2, select/3]).
 :- use_module(library(operators), [push_op/3]).
 :- use_module(library(shlib), [current_foreign_library/2]).
@@ -125,18 +124,37 @@
 
 /** <module> Prolog cross-referencer data collection
 
-This module implements to data-collection  part of the cross-referencer.
-This code is used in two places:
+This library collects information on defined and used objects in Prolog
+source files. Typically these are predicates, but we expect the library
+to deal with other types of objects in the future. The library is a
+building block for tools doing dependency tracking in applications.
+Dependency tracking is useful to reveal the structure of an unknown
+program or detect missing components at compile time, but also for
+program transformation or minimising a program saved state by only
+saving the reachable objects.
 
-    * gxref/0 (part of XPCE) provides a graphical front-end for this
-    module
-    * PceEmacs (also part of XPCE) uses the cross-referencer to color
-    goals and predicates depending on their references.
+The library is exploited by two graphical tools in the SWI-Prolog
+environment: the XPCE front-end started by gxref/0, and
+library(prolog_colour), which exploits this library for its syntax
+highlighting.
+
+For all predicates described below, `Source` is the source that is
+processed. This is normally a filename in any notation acceptable to the
+file loading predicates (see load_files/2). Input handling is done by
+the library(prolog_source), which may be hooked to process any source
+that can be translated into a Prolog stream holding Prolog source text.
+`Callable` is a callable term (see callable/1). Callables do not
+carry a module qualifier unless the referred predicate is not in the
+module defined by `Source`.
 
 @bug    meta_predicate/1 declarations take the module into consideration.
         Predicates that are both available as meta-predicate and normal
         (in different modules) are handled as meta-predicate in all
         places.
+@see	Where this library analyses _source text_, library(prolog_codewalk)
+	may be used to analyse _loaded code_.  The library(check) exploits
+        library(prolog_codewalk) to report on e.g., undefined
+        predicates.
 */
 
 :- predicate_options(xref_source_file/4, 4,
@@ -980,6 +998,8 @@ process_directive(include(Files), Src) :-
     process_include(Files, Src).
 process_directive(dynamic(Dynamic), Src) :-
     process_predicates(assert_dynamic, Dynamic, Src).
+process_directive(dynamic(Dynamic, _Options), Src) :-
+    process_predicates(assert_dynamic, Dynamic, Src).
 process_directive(thread_local(Dynamic), Src) :-
     process_predicates(assert_thread_local, Dynamic, Src).
 process_directive(multifile(Dynamic), Src) :-
@@ -1242,6 +1262,8 @@ xref_meta(order_by(_, G),       [G]).
 xref_meta(limit(_, G),          [G]).
 xref_meta(offset(_, G),         [G]).
 xref_meta(reset(G,_,_),         [G]).
+xref_meta(prolog_listen(Ev,G),  [G+N]) :- event_xargs(Ev, N).
+xref_meta(prolog_listen(Ev,G,_),[G+N]) :- event_xargs(Ev, N).
 
                                         % XPCE meta-predicates
 xref_meta(pce_global(_, new(_)), _) :- !, fail.
@@ -1263,6 +1285,13 @@ setof_goal(_^EG, G) :-
     setof_goal(EG, G).
 setof_goal(G, G).
 
+event_xargs(abort,            0).
+event_xargs(erase,            1).
+event_xargs(break,            3).
+event_xargs(frame_finished,   1).
+event_xargs(thread_exit,      1).
+event_xargs(this_thread_exit, 0).
+event_xargs(PI,               2) :- pi_to_head(PI, _).
 
 %!  head_of(+Rule, -Head)
 %
@@ -1330,7 +1359,6 @@ hook(user:prolog_clause_name(_,_)).
 hook(user:prolog_list_goal(_)).
 hook(user:prolog_predicate_name(_,_)).
 hook(user:prolog_trace_interception(_,_,_,_)).
-hook(user:prolog_event_hook(_)).
 hook(user:prolog_exception_hook(_,_,_,_)).
 hook(sandbox:safe_primitive(_)).
 hook(sandbox:safe_meta_predicate(_)).
@@ -2466,6 +2494,9 @@ process_predicates(Closure, Preds, Src) :-
     is_list(Preds),
     !,
     process_predicate_list(Preds, Closure, Src).
+process_predicates(Closure, as(Preds, _Options), Src) :-
+    !,
+    process_predicates(Closure, Preds, Src).
 process_predicates(Closure, Preds, Src) :-
     process_predicate_comma(Preds, Closure, Src).
 
@@ -2488,6 +2519,9 @@ process_predicate_comma((A,B), Closure, Src) :-
     !,
     process_predicate_comma(A, Closure, Src),
     process_predicate_comma(B, Closure, Src).
+process_predicate_comma(as(Spec, _Options), Closure, Src) :-
+    !,
+    process_predicate_comma(Spec, Closure, Src).
 process_predicate_comma(A, Closure, Src) :-
     call(Closure, A, Src).
 

@@ -171,6 +171,8 @@
 
 #define MSG_TRIE_PUT_TERM	 200
 #define MSG_TRIE_GC		 201
+#define MSG_TRIE_GEN		 202
+#define MSG_TRIE_VM		 203
 
 #define MSG_THREAD_LOCAL	 240
 
@@ -186,9 +188,18 @@
 #define MSG_TABLING_DELAY	 304
 #define MSG_TABLING_DELAY_VAR	 305
 #define MSG_TABLING_AC		 306
+#define MSG_TABLING_MERGE	 307
+#define MSG_TABLING_VTRIE_DEPENDENCIES 308
+#define MSG_TABLING_IDG		 309
+#define MSG_TABLING_IDG_CHANGED	 310
+#define MSG_TABLING_IDG_REEVAL	 311
+#define MSG_TABLING_EXCEPTION	 312
+#define MSG_TABLING_SHARED	 313
+#define MSG_TABLING_ABOLISH	 314
 
-#define TABLING_NO_SIMPLIFY	 310		/* these affect behaviour */
-#define TABLING_NO_AC		 311
+#define TABLING_NO_EARLY_COMPLETION 320
+#define TABLING_NO_SIMPLIFY	 321		/* these affect behaviour */
+#define TABLING_NO_AC		 322
 
 #define CHK_SECURE              1000
 #define CHK_HIGH_ARITY          1001

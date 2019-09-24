@@ -4163,12 +4163,12 @@ PL_foreign_context_predicate(control_t h)
 static int
 has_emergency_space(void *sv, size_t needed)
 { Stack s = (Stack) sv;
-  ssize_t lacking = (s->top + needed) - s->max;
+  ssize_t lacking = ((char*)s->top + needed) - (char*)s->max;
 
   if ( lacking <= 0 )
     return TRUE;
   if ( lacking < s->spare )
-  { s->max   += lacking;
+  { s->max    = (char*)s->max + lacking;
     s->spare -= lacking;
     return TRUE;
   }
@@ -4564,8 +4564,8 @@ __asan_default_options(), providing an alternative   to  the environment
 variable LSAN_OPTIONS=.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
-PL_halt(int status)
+static int
+haltProlog(int status)
 { int reclaim_memory = FALSE;
 
 #if defined(GC_DEBUG) || defined(O_DEBUG) || defined(__SANITIZE_ADDRESS__)
@@ -4583,10 +4583,24 @@ PL_halt(int status)
     __lsan_disable();
 #endif
 
-    exit(status);
+    return TRUE;
   }
 
   return FALSE;
+}
+
+int
+PL_halt(int status)
+{ if ( haltProlog(status) )
+    exit(status);
+
+  return FALSE;
+}
+
+void
+PL_abort_process(void)
+{ haltProlog(128+SIGABRT);
+  abort();
 }
 
 		 /*******************************
@@ -4659,7 +4673,7 @@ PL_clearsig__LD(int sig ARG_LD)
   { int off  = (sig-1)/32;
     int mask = 1 << ((sig-1)%32);
 
-    __sync_and_and_fetch(&LD->signal.pending[off], ~mask);
+    ATOMIC_AND(&LD->signal.pending[off], ~mask);
     updateAlerted(LD);
     return TRUE;
   }

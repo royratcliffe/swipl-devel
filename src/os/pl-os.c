@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2018, University of Amsterdam
+    Copyright (c)  2011-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -50,11 +51,16 @@ is supposed to give the POSIX standard one.
 #define _POSIX_PTHREAD_SEMANTICS 1
 #endif
 
-#define __MINGW_USE_VC2005_COMPAT		/* Get Windows time_t as 64-bit */
+#define __MINGW_USE_VC2005_COMPAT	/* Get Windows time_t as 64-bit */
 
-#ifdef __MINGW32__
+#ifdef __WINDOWS__
 #include <winsock2.h>
+#include <sys/stat.h>
 #include <windows.h>
+
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
 #endif
 
 #include "pl-incl.h"
@@ -602,11 +608,17 @@ free_tmp_symbol(void *name, void *value)
 #define SWIPL_TMP_DIR "/tmp"
 #endif
 
+/* tmp_dir() returns the temporary file directory in REP_FN
+ * encoding.
+ */
+
 static const char *
 tmp_dir(void)
 { GET_LD
 
+#ifdef O_PLMT
   if ( LD )
+#endif
   { atom_t a;
     static atom_t      tmp_aname = NULL_ATOM;
     static const char *tmp_name = NULL;
@@ -620,7 +632,7 @@ tmp_dir(void)
 
 	if ( (t=PL_new_term_ref()) &&
 	     PL_put_atom(t, a) &&
-	     PL_get_chars(t, &s, CVT_ATOM|REP_MB|BUF_MALLOC) )
+	     PL_get_chars(t, &s, CVT_ATOM|REP_FN|BUF_MALLOC) )
 	{ if ( tmp_name ) PL_free((void*)tmp_name);
 	  if ( tmp_aname ) PL_unregister_atom(tmp_aname);
 
@@ -694,11 +706,18 @@ retry:
 #ifdef __WINDOWS__
 { char *tmp;
   static int temp_counter = 0;
+#ifndef __LCC__
+  wchar_t *wtmp, *wtmpdir, *wid;
+  wchar_t buf1[MAXPATHLEN], buf2[MAXPATHLEN];
+#endif
 
 #ifdef __LCC__
   if ( (tmp = tmpnam(NULL)) )
 #else
-  if ( (tmp = _tempnam(tmpdir, id)) )
+  if ( (wtmpdir = _xos_os_filenameW(tmpdir, buf1, MAXPATHLEN)) &&
+       (wid     = _xos_os_filenameW(id,     buf2, MAXPATHLEN)) &&
+       (wtmp    = _wtempnam(wtmpdir, wid)) &&
+       (tmp     = _xos_canonical_filenameW(wtmp, temp, sizeof(temp), 0)) )
 #endif
   { if ( !PrologPath(tmp, temp, sizeof(temp)) )
       return NULL_ATOM;
@@ -728,7 +747,7 @@ retry:
     *fdp = fd;
   }
 
-  tname = PL_new_atom(temp);		/* locked: ok! */
+  tname = PL_new_atom_mbchars(REP_FN, (size_t)-1, temp); /* locked: ok! */
 
   PL_LOCK(L_OS);
   if ( !GD->os.tmp_files )
@@ -2518,7 +2537,9 @@ const char *
 prog_shell(void)
 { GET_LD
 
+#ifdef O_PLMT
   if ( LD )
+#endif
   { atom_t a;
 
     if ( PL_current_prolog_flag(ATOM_posix_shell, PL_ATOM, &a) )

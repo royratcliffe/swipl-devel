@@ -11,6 +11,7 @@
 A abort			"abort"
 A aborted		"$aborted"
 A abs			"abs"
+A abstract		"abstract"
 A access		"access"
 A access_level		"access_level"
 A acos			"acos"
@@ -19,6 +20,7 @@ A active		"active"
 A acyclic_term		"acyclic_term"
 A add_import		"add_import"
 A address		"address"
+A affected		"affected"
 A affinity		"affinity"
 A agc			"agc"
 A agc_gained		"agc_gained"
@@ -45,6 +47,7 @@ A asin			"asin"
 A asinh			"asinh"
 A assert		"assert"
 A asserta		"asserta"
+A assertz		"assertz"
 A at			"at"
 A at_equals		"=@="
 A at_exit		"at_exit"
@@ -136,6 +139,7 @@ A colon_eq		":="
 A comma			","
 A comment		"comment"
 A comments		"comments"
+A compiled_size		"compiled_size"
 A complete		"complete"
 A compound		"compound"
 A context		"context"
@@ -176,7 +180,8 @@ A dcont			"$cont$"
 A dcut			"$cut"
 A dde_error		"dde_error"
 A dde_handle		"dde_handle"
-A deadline			"deadline"
+A deadline		"deadline"
+A deadlock		"deadlock"
 A debug			"debug"
 A debug_on_error	"debug_on_error"
 A debug_topic		"debug_topic"
@@ -190,6 +195,7 @@ A default		"default"
 A defined		"defined"
 A deflated		"deflated"
 A delete		"delete"
+A dependent		"dependent"
 A depth			"depth"
 A depth_limit_exceeded	"depth_limit_exceeded"
 A destroy		"destroy"
@@ -364,6 +370,7 @@ A import_type		"import_type"
 A imported		"imported"
 A imported_procedure	"imported_procedure"
 A cont_inactive		"<inactive>"
+A incremental		"incremental"
 A index			"index"
 A indexed		"indexed"
 A indexes_created	"indexes_created"
@@ -386,6 +393,7 @@ A int_overflow		"int_overflow"
 A integer		"integer"
 A integer_expression	"integer_expression"
 A interrupt		"interrupt"
+A invalid		"invalid"
 A io_error		"io_error"
 A io_mode		"io_mode"
 A ioctl			"ioctl"
@@ -401,6 +409,7 @@ A key			"key"
 A key_value_position	"key_value_position"
 A larger		">"
 A larger_equal		">="
+A last			"last"
 A last_modified_generation "last_modified_generation"
 A level			"level"
 A lgamma		"lgamma"
@@ -484,6 +493,7 @@ A no_memory		"no_memory"
 A node_count		"node_count"
 A nodebug		"nodebug"
 A non_empty_list	"non_empty_list"
+A non_tabled_procedure	"non_tabled_procedure"
 A non_terminal		"non_terminal"
 A non_terminating	"non_terminating"
 A none			"none"
@@ -571,6 +581,7 @@ A prolog_flag_access	"prolog_flag_access"
 A prolog_flag_option	"prolog_flag_option"
 A prolog_flag_type	"prolog_flag_type"
 A prolog_identifier_continue "prolog_identifier_continue"
+A prolog_listen_option  "prolog_listen_option"
 A prolog_symbol		"prolog_symbol"
 A prolog_var_start	"prolog_var_start"
 A prompt		"|: "
@@ -629,6 +640,8 @@ A resource		"resource"
 A resource_error	"resource_error"
 A resource_handle	"resource_handle"
 A ret			"ret"
+A retract		"retract"
+A retractall		"retractall"
 A retry			"retry"
 A round			"round"
 A rshift		">>"
@@ -648,6 +661,7 @@ A setup_call_catcher_cleanup "setup_call_catcher_cleanup"
 A shared		"shared"
 A shared_object		"shared_object"
 A shared_object_handle	"shared_object_handle"
+A shared_table_space	"shared_table_space"
 A shell			"shell"
 A shift_time		"shift_time"
 A sign			"sign"
@@ -714,12 +728,16 @@ A system_time		"system_time"
 A table			"table"
 A table_space		"table_space"
 A table_space_used	"table_space_used"
+A tabled		"tabled"
+A table_state		"table_state"
 A tag			"tag"
 A tan			"tan"
 A tanh			"tanh"
 A temporary		"temporary"
 A temporary_file	"temporary_file"
 A temporary_files	"temporary_files"
+A dtabled		"$tabled"
+A targp			"$targp"
 A term			"term"
 A term_expansion	"term_expansion"
 A term_position		"term_position"
@@ -728,9 +746,11 @@ A terminal_capability	"terminal_capability"
 A test			"test"
 A text			"text"
 A text_stream		"text_stream"
+A this_thread_exit	"this_thread_exit"
 A thousands_sep		"thousands_sep"
 A thread		"thread"
 A thread_cputime	"thread_cputime"
+A thread_exit		"thread_exit"
 A thread_get_message_option "thread_get_message_option"
 A thread_initialization "thread_initialization"
 A thread_local		"thread_local"
@@ -772,6 +792,7 @@ A transposed_char	"transposed_char"
 A transposed_word	"transposed_word"
 A true			"true"
 A truncate		"truncate"
+A tshared		"tshared"
 A tty			"tty"
 A tty_control		"tty_control"
 A type			"type"
@@ -791,6 +812,7 @@ A unlimited		"unlimited"
 A unload		"unload"
 A unlock		"unlock"
 A unlocked		"unlocked"
+A untable		"untable"
 A up			"up"
 A update		"update"
 A upper			"upper"
@@ -844,6 +866,7 @@ F alias			1
 F and			2
 F ar_equals		2
 F ar_not_equal		2
+F targp			3
 F asin			1
 F asinh			1
 F assert		1
@@ -926,6 +949,7 @@ F dquasi_quotation	3
 F drecover_and_rethrow	2
 F dshift		1
 F dstream		1
+F dtabled		2
 F dthread_init		0
 F dthrow		1
 F dtime			2
@@ -934,6 +958,7 @@ F dvard			1
 F dwakeup		1
 F e			0
 F encoding		1
+F end			1
 F end_of_stream		1
 F engine		1
 F eof_action		1
@@ -1079,6 +1104,7 @@ F softcut		2
 F spy			1
 F sqrt			1
 F star			2
+F start			1
 F status		1
 F stream		1
 F stream		4
@@ -1090,6 +1116,7 @@ F string_position	2
 F syntax_error		1
 F syntax_error		3
 F system_thread_id	1
+F table_state		3
 F tag			1
 F tan			1
 F tanh			1

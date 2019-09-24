@@ -836,6 +836,7 @@ with one operation, it turns out to be faster as well.
 
 /* Flags on predicates (packed in unsigned int */
 
+#define P_TABLED		(0x00000001) /* tabled predicate */
 #define P_CLAUSABLE		(0x00000002) /* Clause/2 always works */
 #define P_QUASI_QUOTATION_SYNTAX (0x00000004) /* {|Type||Quasi Quote|} */
 #define P_NON_TERMINAL		(0x00000008) /* Grammar rule (Name//Arity) */
@@ -861,13 +862,14 @@ with one operation, it turns out to be faster as well.
 #define HIDE_CHILDS		(0x00800000) /* Hide children from tracer */
 #define SPY_ME			(0x01000000) /* Spy point placed */
 #define TRACE_ME		(0x02000000) /* Can be debugged */
-#define TRACE_CALL		(0x04000000) /* Trace calls */
-#define TRACE_REDO		(0x08000000) /* Trace redo */
-#define TRACE_EXIT		(0x10000000) /* Trace edit */
-#define TRACE_FAIL		(0x20000000) /* Trace fail */
+#define P_INCREMENTAL		(0x04000000) /* Incremental tabling */
+#define P_ABSTRACT		(0x08000000) /* Incremental tabling */
+#define P_TSHARED		(0x10000000) /* Using a shared table */
+#define	P_LOCKED_SUPERVISOR	(0x20000000) /* Fixed supervisor */
 #define FILE_ASSIGNED		(0x40000000) /* Is assigned to a file */
 #define P_REDEFINED		(0x80000000) /* Overrules a definition */
-#define PROC_DEFINED		(P_DYNAMIC|P_FOREIGN|P_MULTIFILE|P_DISCONTIGUOUS)
+#define PROC_DEFINED		(P_DYNAMIC|P_FOREIGN|P_MULTIFILE|\
+				 P_DISCONTIGUOUS|P_LOCKED_SUPERVISOR)
 /* flags for p_reload data (reconsult) */
 #define P_MODIFIED		P_DIRTYREG
 #define P_NEW			SPY_ME
@@ -1359,15 +1361,16 @@ typedef struct gc_stats
 #define CA1_INT64	5	/* int64 value */
 #define CA1_FLOAT	6	/* next WORDS_PER_DOUBLE are double */
 #define CA1_STRING	7	/* inlined string */
-#define CA1_MODULE	8	/* a module */
-#define CA1_VAR		9	/* a variable(-offset) */
-#define CA1_FVAR       10	/* a variable(-offset), used as `firstvar' */
-#define CA1_CHP	       11	/* ChoicePoint (also variable(-offset)) */
-#define CA1_MPZ	       12	/* GNU mpz number */
+#define CA1_MPZ	        8	/* GNU mpz number */
+#define CA1_MODULE      9	/* a module */
+#define CA1_VAR	       10	/* a variable(-offset) */
+#define CA1_FVAR       11	/* a variable(-offset), used as `firstvar' */
+#define CA1_CHP	       12	/* ChoicePoint (also variable(-offset)) */
 #define CA1_FOREIGN    13	/* Foreign function pointer */
 #define CA1_CLAUSEREF  14	/* Clause reference */
 #define CA1_JUMP       15	/* Instructions to skip */
 #define CA1_AFUNC      16	/* Number of arithmetic function */
+#define CA1_TRIE_NODE  17	/* Tabling: answer trie node with delays */
 
 #define VIF_BREAK      0x01	/* Can be a breakpoint */
 
@@ -1424,6 +1427,7 @@ struct clause_index
   unsigned int	 dirty;			/* # chains that are dirty */
   unsigned	 is_list : 1;		/* Index with lists */
   unsigned	 incomplete : 1;	/* Index is incomplete */
+  unsigned	 invalid : 1;		/* Index is invalid */
   iarg_t	 args[MAX_MULTI_INDEX];	/* Indexed arguments */
   iarg_t	 position[MAXINDEXDEPTH+1]; /* Deep index position */
   float		 speedup;		/* Estimated speedup */
@@ -1452,6 +1456,7 @@ struct definition
   unsigned int  shared;			/* #procedures sharing this def */
   struct linger_list  *lingering;	/* Assocated lingering objects */
   gen_t		last_modified;		/* Generation I was last modified */
+  struct event_list *events;		/* Forward update events */
 #ifdef O_PROF_PENTIUM
   int		prof_index;		/* index in profiling */
   char	       *prof_name;		/* name in profiling */
@@ -1968,26 +1973,6 @@ typedef struct
 
 
 		 /*******************************
-		 *	      EVENTS		*
-		 *******************************/
-
-typedef enum pl_event_type
-{ PLEV_ABORT,				/* Execution aborted */
-  PLEV_ERASED_CLAUSE,			/* clause was erased */
-  PLEV_ERASED_RECORD,			/* record was erased */
-  PLEV_DEBUGGING,			/* changed debugging mode */
-  PLEV_TRACING,				/* changed tracing mode */
-  PLEV_SPY,				/* changed spypoint */
-  PLEV_BREAK,				/* a break-point was set */
-  PLEV_BREAK_EXISTS,			/* existing breakpoint */
-  PLEV_NOBREAK,				/* a break-point was cleared */
-  PLEV_GCNOBREAK,			/* cleared due to clause GC */
-  PLEV_FRAMEFINISHED,			/* A watched frame was discarded */
-  PL_EV_THREADFINISHED			/* A thread has finished */
-} pl_event_type;
-
-
-		 /*******************************
 		 *	       COMPARE		*
 		 *******************************/
 
@@ -2124,8 +2109,10 @@ size N on the global stack AND  can   use  bindConst()  to bind it to an
 #define BIND_GLOBAL_SPACE (7)
 #define BIND_TRAIL_SPACE (6)
 #define hasGlobalSpace(n) \
-	(likely(gTop+(n)+BIND_GLOBAL_SPACE <= gMax) && \
-	 likely(tTop+BIND_TRAIL_SPACE <= tMax))
+	hasStackSpace(n,0)
+#define hasStackSpace(g, t) \
+	(likely(gTop+(g)+BIND_GLOBAL_SPACE <= gMax) && \
+	 likely(tTop+(t)+BIND_TRAIL_SPACE <= tMax))
 #define overflowCode(n) \
 	( (gTop+(n)+BIND_GLOBAL_SPACE > gMax) ? GLOBAL_OVERFLOW \
 					      : TRAIL_OVERFLOW )
@@ -2263,7 +2250,6 @@ typedef struct
 #define PROCEDURE_reset3		(GD->procedures.reset3)
 #define PROCEDURE_true0			(GD->procedures.true0)
 #define PROCEDURE_fail0			(GD->procedures.fail0)
-#define PROCEDURE_event_hook1		(GD->procedures.event_hook1)
 #define PROCEDURE_print_message2	(GD->procedures.print_message2)
 #define PROCEDURE_dcall1		(GD->procedures.dcall1)
 #define PROCEDURE_setup_call_catcher_cleanup4 \
@@ -2362,13 +2348,13 @@ typedef struct debuginfo
 #define PLFLAG_CHARESCAPE	    0x00000001 /* handle \ in atoms */
 #define PLFLAG_GC		    0x00000002 /* do GC */
 #define PLFLAG_TRACE_GC		    0x00000004 /* verbose gc */
-#define PLFLAG_TTY_CONTROL	    0x00000008 /* allow for tty control */
-//				    0x00000010 /* not used */
+#define PLFLAG_GCTHREAD		    0x00000008 /* Do atom/clause GC in a thread */
+#define PLFLAG_TTY_CONTROL	    0x00000010 /* allow for tty control */
 #define PLFLAG_DEBUG_ON_ERROR	    0x00000020 /* start tracer on error */
 #define PLFLAG_REPORT_ERROR	    0x00000040 /* print error message */
 #define PLFLAG_FILE_CASE	    0x00000080 /* file names are case sensitive */
 #define PLFLAG_FILE_CASE_PRESERVING 0x00000100 /* case preserving file names */
-#define PLFLAG_DOS_FILE_NAMES       0x00000200 /* dos (8+3) file names */
+#define PLFLAG_ERROR_AMBIGUOUS_STREAM_PAIR 0x00000200
 #define ALLOW_VARNAME_FUNCTOR	    0x00000400 /* Read Foo(x) as 'Foo'(x) */
 #define PLFLAG_ISO		    0x00000800 /* Strict ISO compliance */
 #define PLFLAG_OPTIMISE		    0x00001000 /* -O: optimised compilation */
@@ -2385,9 +2371,9 @@ typedef struct debuginfo
 #define PLFLAG_DOT_IN_ATOM	    0x00800000 /* Allow atoms a.b.c */
 #define PLFLAG_VARPREFIX	    0x01000000 /* Variable must start with _ */
 #define PLFLAG_PROTECT_STATIC_CODE  0x02000000 /* Deny clause/2 on static code */
-#define PLFLAG_ERROR_AMBIGUOUS_STREAM_PAIR 0x04000000
-#define PLFLAG_GCTHREAD		    0x08000000 /* Do atom/clause GC in a thread */
-#define PLFLAG_MITIGATE_SPECTRE	    0x10000000 /* Mitigate spectre attacks */
+#define PLFLAG_MITIGATE_SPECTRE	    0x04000000 /* Mitigate spectre attacks */
+#define PLFLAG_TABLE_INCREMENTAL    0x08000000 /* By default incremental tabling */
+#define PLFLAG_TABLE_SHARED	    0x10000000 /* By default shared tabling */
 
 typedef struct
 { unsigned int flags;		/* Fast access to some boolean Prolog flags */

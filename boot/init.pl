@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2018, University of Amsterdam
+    Copyright (c)  1985-2019, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -97,24 +97,49 @@ attempt to call the Prolog defined trace interceptor.
 %   attributes. These predicates bail out with an error on the first
 %   failure (typically permission errors).
 
-dynamic(Spec)            :- '$set_pattr'(Spec, pred, (dynamic)).
-multifile(Spec)          :- '$set_pattr'(Spec, pred, (multifile)).
-module_transparent(Spec) :- '$set_pattr'(Spec, pred, (transparent)).
-discontiguous(Spec)      :- '$set_pattr'(Spec, pred, (discontiguous)).
-volatile(Spec)           :- '$set_pattr'(Spec, pred, (volatile)).
-thread_local(Spec)       :- '$set_pattr'(Spec, pred, (thread_local)).
-noprofile(Spec)          :- '$set_pattr'(Spec, pred, (noprofile)).
-public(Spec)             :- '$set_pattr'(Spec, pred, (public)).
-non_terminal(Spec)       :- '$set_pattr'(Spec, pred, (non_terminal)).
-'$iso'(Spec)             :- '$set_pattr'(Spec, pred, (iso)).
-'$clausable'(Spec)       :- '$set_pattr'(Spec, pred, (clausable)).
+%!  '$iso'(+Spec) is det.
+%
+%   Set the ISO  flag.  This  defines   that  the  predicate  cannot  be
+%   redefined inside a module.
+
+%!  '$clausable'(+Spec) is det.
+%
+%   Specify that we can run  clause/2  on   a  predicate,  even if it is
+%   static. ISO specifies that `public` also   plays  this role. in SWI,
+%   `public` means that the predicate can be   called, even if we cannot
+%   find a reference to it.
+
+%!  '$hide'(+Spec) is det.
+%
+%   Specify that the predicate cannot be seen in the debugger.
+
+dynamic(Spec)            :- '$set_pattr'(Spec, pred, dynamic(true)).
+multifile(Spec)          :- '$set_pattr'(Spec, pred, multifile(true)).
+module_transparent(Spec) :- '$set_pattr'(Spec, pred, transparent(true)).
+discontiguous(Spec)      :- '$set_pattr'(Spec, pred, discontiguous(true)).
+volatile(Spec)           :- '$set_pattr'(Spec, pred, volatile(true)).
+thread_local(Spec)       :- '$set_pattr'(Spec, pred, thread_local(true)).
+noprofile(Spec)          :- '$set_pattr'(Spec, pred, noprofile(true)).
+public(Spec)             :- '$set_pattr'(Spec, pred, public(true)).
+non_terminal(Spec)       :- '$set_pattr'(Spec, pred, non_terminal(true)).
+'$iso'(Spec)             :- '$set_pattr'(Spec, pred, iso(true)).
+'$clausable'(Spec)       :- '$set_pattr'(Spec, pred, clausable(true)).
+'$hide'(Spec)            :- '$set_pattr'(Spec, pred, trace(false)).
 
 '$set_pattr'(M:Pred, How, Attr) :-
     '$set_pattr'(Pred, M, How, Attr).
 
+%!  '$set_pattr'(+Spec, +Module, +From, +Attr)
+%
+%   Set predicate attributes. From is one of `pred` or `directive`.
+
 '$set_pattr'(X, _, _, _) :-
     var(X),
-    throw(error(instantiation_error, _)).
+    '$uninstantiation_error'(X).
+'$set_pattr'(as(Spec,Options), M, How, Attr0) :-
+    !,
+    '$attr_options'(Options, Attr0, Attr),
+    '$set_pattr'(Spec, M, How, Attr).
 '$set_pattr'([], _, _, _) :- !.
 '$set_pattr'([H|T], M, How, Attr) :-           % ISO
     !,
@@ -127,14 +152,68 @@ non_terminal(Spec)       :- '$set_pattr'(Spec, pred, (non_terminal)).
 '$set_pattr'(M:T, _, How, Attr) :-
     !,
     '$set_pattr'(T, M, How, Attr).
+'$set_pattr'(PI, M, _, []) :-
+    !,
+    '$pi_head'(M:PI, Pred),
+    (   '$get_predicate_attribute'(Pred, incremental, 1)
+    ->  '$wrap_incremental'(Pred)
+    ;   '$unwrap_incremental'(Pred)
+    ).
+'$set_pattr'(A, M, How, [O|OT]) :-
+    !,
+    '$set_pattr'(A, M, How, O),
+    '$set_pattr'(A, M, How, OT).
 '$set_pattr'(A, M, pred, Attr) :-
     !,
-    '$set_predicate_attribute'(M:A, Attr, true).
+    Attr =.. [Name,Val],
+    '$set_predicate_attribute'(M:A, Name, Val).
 '$set_pattr'(A, M, directive, Attr) :-
     !,
-    catch('$set_predicate_attribute'(M:A, Attr, true),
+    Attr =.. [Name,Val],
+    catch('$set_predicate_attribute'(M:A, Name, Val),
           error(E, _),
-          print_message(error, error(E, context((Attr)/1,_)))).
+          print_message(error, error(E, context((Name)/1,_)))).
+
+'$attr_options'(Var, _, _) :-
+    var(Var),
+    !,
+    '$uninstantiation_error'(Var).
+'$attr_options'((A,B), Attr0, Attr) :-
+    !,
+    '$attr_options'(A, Attr0, Attr1),
+    '$attr_options'(B, Attr1, Attr).
+'$attr_options'(Opt, Attr0, Attrs) :-
+    '$must_be'(ground, Opt),
+    (   '$attr_option'(Opt, AttrX)
+    ->  (   is_list(Attr0)
+        ->  '$join_attrs'(AttrX, Attr0, Attrs)
+        ;   '$join_attrs'(AttrX, [Attr0], Attrs)
+        )
+    ;   '$domain_error'(predicate_option, Opt)
+    ).
+
+'$join_attrs'(Attr, Attrs, Attrs) :-
+    memberchk(Attr, Attrs),
+    !.
+'$join_attrs'(Attr, Attrs, Attrs) :-
+    Attr =.. [Name,Value],
+    Gen =.. [Name,Existing],
+    memberchk(Gen, Attrs),
+    !,
+    throw(error(conflict_error(Name, Value, Existing), _)).
+'$join_attrs'(Attr, Attrs0, Attrs) :-
+    '$append'(Attrs0, [Attr], Attrs).
+
+'$attr_option'(incremental, incremental(true)).
+'$attr_option'(opaque, incremental(false)).
+'$attr_option'(abstract(Level), abstract(true)) :-
+    '$must_be'(between(0,0), Level).
+'$attr_option'(volatile, volatile(true)).
+'$attr_option'(multifile, multifile(true)).
+'$attr_option'(discontiguous, discontiguous(true)).
+'$attr_option'(shared, thread_local(false)).
+'$attr_option'(local, thread_local(true)).
+'$attr_option'(private, thread_local(true)).
 
 %!  '$pattr_directive'(+Spec, +Module) is det.
 %
@@ -144,29 +223,21 @@ non_terminal(Spec)       :- '$set_pattr'(Spec, pred, (non_terminal)).
 %   continues with the remaining predicates.
 
 '$pattr_directive'(dynamic(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (dynamic)).
+    '$set_pattr'(Spec, M, directive, dynamic(true)).
 '$pattr_directive'(multifile(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (multifile)).
+    '$set_pattr'(Spec, M, directive, multifile(true)).
 '$pattr_directive'(module_transparent(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (transparent)).
+    '$set_pattr'(Spec, M, directive, transparent(true)).
 '$pattr_directive'(discontiguous(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (discontiguous)).
+    '$set_pattr'(Spec, M, directive, discontiguous(true)).
 '$pattr_directive'(volatile(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (volatile)).
+    '$set_pattr'(Spec, M, directive, volatile(true)).
 '$pattr_directive'(thread_local(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (thread_local)).
+    '$set_pattr'(Spec, M, directive, thread_local(true)).
 '$pattr_directive'(noprofile(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (noprofile)).
+    '$set_pattr'(Spec, M, directive, noprofile(true)).
 '$pattr_directive'(public(Spec), M) :-
-    '$set_pattr'(Spec, M, directive, (public)).
-
-
-%!  '$hide'(:PI)
-%
-%   Predicates protected this way are never visible in the tracer.
-
-'$hide'(Pred) :-
-    '$set_predicate_attribute'(Pred, trace, false).
+    '$set_pattr'(Spec, M, directive, public(true)).
 
 :- '$iso'(((dynamic)/1, (multifile)/1, (discontiguous)/1)).
 
@@ -718,10 +789,8 @@ default_module(Me, Super) :-
                 *      TRACE AND EXCEPTIONS     *
                 *********************************/
 
-:- user:dynamic((exception/3,
-                 prolog_event_hook/1)).
-:- user:multifile((exception/3,
-                   prolog_event_hook/1)).
+:- dynamic   user:exception/3.
+:- multifile user:exception/3.
 
 %!  '$undefined_procedure'(+Module, +Name, +Arity, -Action) is det.
 %
@@ -1971,12 +2040,20 @@ load_files(Module:Files, Options) :-
         ->  (   access_file(QlfFile, write)
             ->  print_message(informational,
                               qlf(recompile(Spec, FullFile, QlfFile, Why))),
-                Mode = qcompile
+                Mode = qcompile,
+                LoadFile = FullFile
+            ;   Why == old,
+                current_prolog_flag(home, PlHome),
+                sub_atom(FullFile, 0, _, _, PlHome)
+            ->  print_message(silent,
+                              qlf(system_lib_out_of_date(Spec, QlfFile))),
+                Mode = qload,
+                LoadFile = QlfFile
             ;   print_message(warning,
                               qlf(can_not_recompile(Spec, QlfFile, Why))),
-                Mode = compile
-            ),
-            LoadFile = FullFile
+                Mode = compile,
+                LoadFile = FullFile
+            )
         ;   Mode = qload,
             LoadFile = QlfFile
         )
@@ -3179,10 +3256,6 @@ load_files(Module:Files, Options) :-
     (   '$load_input'(_F, S)
     ->  set_stream(S, encoding(Encoding))
     ).
-'$execute_directive_2'(ISO, F) :-
-    '$expand_directive'(ISO, Normal),
-    !,
-    '$execute_directive'(Normal, F).
 '$execute_directive_2'(Goal, _) :-
     \+ '$compilation_mode'(database),
     !,
@@ -3247,28 +3320,6 @@ load_files(Module:Files, Options) :-
 '$exception_in_directive'(Term) :-
     '$print_message'(error, Term),
     fail.
-
-%       This predicate deals with the very odd ISO requirement to allow
-%       for :- dynamic(a/2, b/3, c/4) instead of the normally used
-%       :- dynamic a/2, b/3, c/4 or, if operators are not desirable,
-%       :- dynamic((a/2, b/3, c/4)).
-
-'$expand_directive'(Directive, Expanded) :-
-    functor(Directive, Name, Arity),
-    Arity > 1,
-    '$iso_property_directive'(Name),
-    Directive =.. [Name|Args],
-    '$mk_normal_args'(Args, Normal),
-    Expanded =.. [Name, Normal].
-
-'$iso_property_directive'(dynamic).
-'$iso_property_directive'(multifile).
-'$iso_property_directive'(discontiguous).
-
-'$mk_normal_args'([One], One).
-'$mk_normal_args'([H|T0], (H,T)) :-
-    '$mk_normal_args'(T0, T).
-
 
 %       Note that the list, consult and ensure_loaded directives are already
 %       handled at compile time and therefore should not go into the
@@ -3580,6 +3631,14 @@ compile_aux_clauses(Clauses) :-
     ->  true
     ;   '$type_error'(integer, X)
     ).
+'$must_be'(between(Low,High), X) :- !,
+    (   integer(X)
+    ->  (   between(Low, High, X)
+        ->  true
+        ;   '$domain_error'(between(Low,High), X)
+        )
+    ;   '$type_error'(integer, X)
+    ).
 '$must_be'(callable, X) :- !,
     (   callable(X)
     ->  true
@@ -3595,6 +3654,11 @@ compile_aux_clauses(Clauses) :-
     (   (X == true ; X == false)
     ->  true
     ;   '$type_error'(boolean, X)
+    ).
+'$must_be'(ground, X) :- !,
+    (   ground(X)
+    ->  true
+    ;   '$instantiation_error'(X)
     ).
 % Use for debugging
 %'$must_be'(Type, _X) :- format('Unknown $must_be type: ~q~n', [Type]).
@@ -3775,6 +3839,49 @@ length(_, Length) :-
     !.
 '$prolog_list_goal'(Goal) :-
     user:listing(Goal).
+
+		 /*******************************
+		 *              MISC		*
+		 *******************************/
+
+'$pi_head'(PI, Head) :-
+    var(PI),
+    var(Head),
+    '$instantiation_error'([PI,Head]).
+'$pi_head'(M:PI, M:Head) :-
+    !,
+    '$pi_head'(PI, Head).
+'$pi_head'(Name/Arity, Head) :-
+    !,
+    '$head_name_arity'(Head, Name, Arity).
+'$pi_head'(Name//DCGArity, Head) :-
+    !,
+    (   nonvar(DCGArity)
+    ->  Arity is DCGArity+2,
+        '$head_name_arity'(Head, Name, Arity)
+    ;   '$head_name_arity'(Head, Name, Arity),
+        DCGArity is Arity - 2
+    ).
+'$pi_head'(PI, _) :-
+    '$type_error'(predicate_indicator, PI).
+
+'$head_name_arity'(Goal, Name, Arity) :-
+    (   atom(Goal)
+    ->  Name = Goal, Arity = 0
+    ;   compound(Goal)
+    ->  compound_name_arity(Goal, Name, Arity)
+    ;   var(Goal)
+    ->  (   Arity == 0
+        ->  (   atom(Name)
+            ->  Goal = Name
+            ;   blob(Name, closure)
+            ->  Goal = Name
+            ;   '$type_error'(atom, Name)
+            )
+        ;   compound_name_arity(Goal, Name, Arity)
+        )
+    ;   '$type_error'(callable, Goal)
+    ).
 
 
                  /*******************************

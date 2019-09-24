@@ -39,24 +39,27 @@
 #define _GNU_SOURCE 1			/* get recursive mutex stuff to */
 					/* compile clean with glibc.  Can */
 					/* this do any harm? */
+#ifdef __WINDOWS__
+#include <winsock2.h>
+#include <windows.h>
+#include <errno.h>			/* must be before pl-incl.h */
+#endif
 
 #if __MINGW32__
 #define __try
 #define __except(_) if (0)
 #define __finally
-#include <winsock2.h>
-#include <windows.h>
-#include <errno.h>			/* must be before pl-incl.h */
 #endif
 
 #include "pl-incl.h"
 #include "pl-tabling.h"
 #include "os/pl-cstack.h"
 #include "pl-prof.h"
+#include "pl-event.h"
 #include <stdio.h>
 #include <math.h>
 
-#if __MINGW32__				/* this is a stub.  Should be detected */
+#if __WINDOWS__				/* this is a stub.  Should be detected */
 #undef HAVE_PTHREAD_SETNAME_NP		/* in configure.ac */
 #endif
 
@@ -309,7 +312,8 @@ counting_mutex _PL_mutexes[] =
   COUNT_MUTEX_INITIALIZER("L_SORTR"),
   COUNT_MUTEX_INITIALIZER("L_UMUTEX"),
   COUNT_MUTEX_INITIALIZER("L_INIT_ATOMS"),
-  COUNT_MUTEX_INITIALIZER("L_CGCGEN")
+  COUNT_MUTEX_INITIALIZER("L_CGCGEN"),
+  COUNT_MUTEX_INITIALIZER("L_EVHOOK")
 #ifdef __WINDOWS__
 , COUNT_MUTEX_INITIALIZER("L_DDE")
 , COUNT_MUTEX_INITIALIZER("L_CSTACK")
@@ -440,7 +444,6 @@ static void	destroy_message_queue(message_queue *queue);
 static void	destroy_thread_message_queue(message_queue *queue);
 static void	init_message_queue(message_queue *queue, size_t max_size);
 static void	freeThreadSignals(PL_local_data_t *ld);
-static void	run_thread_exit_hooks(PL_local_data_t *ld);
 static thread_handle *create_thread_handle(PL_thread_info_t *info);
 static void	free_thread_info(PL_thread_info_t *info);
 static void	set_system_thread_id(PL_thread_info_t *info);
@@ -454,7 +457,6 @@ static int	get_message_queue_unlocked__LD(term_t t, message_queue **queue ARG_LD
 static int	get_message_queue__LD(term_t t, message_queue **queue ARG_LD);
 static void	release_message_queue(message_queue *queue);
 static void	initMessageQueues(void);
-static int	thread_at_exit(term_t goal, PL_local_data_t *ld);
 static int	get_thread(term_t t, PL_thread_info_t **info, int warn);
 static int	is_alive(int status);
 static void	init_predicate_references(PL_local_data_t *ld);
@@ -592,95 +594,108 @@ freePrologThread(PL_local_data_t *ld, int after_fork)
 { PL_thread_info_t *info;
   int acknowledge;
   double time;
+  PL_local_data_t *old_ld;
+
+  { GET_LD
+    old_ld = LD;
+  }
 
   if ( !threads_ready )
     return;				/* Post-mortem */
 
-  info = ld->thread.info;
-  DEBUG(MSG_THREAD, Sdprintf("Freeing prolog thread %d (status = %d)\n",
-			     info->pl_tid, info->status));
+  TLD_set_LD(ld);
+  { GET_LD
 
-  if ( !after_fork )
-  { int rc;
-    PL_LOCK(L_THREAD);
-    if ( info->status == PL_THREAD_RUNNING )
-      info->status = PL_THREAD_EXITED;	/* foreign pthread_exit() */
-    acknowledge = ld->exit_requested;
-    PL_UNLOCK(L_THREAD);
+    info = ld->thread.info;
+    DEBUG(MSG_THREAD, Sdprintf("Freeing prolog thread %d (status = %d)\n",
+			       info->pl_tid, info->status));
 
-    ld->critical++;   /* startCritical  */
-    info->in_exit_hooks = TRUE;
-    if ( !(rc = callEventHook(PL_EV_THREADFINISHED, info)) )
-    { GET_LD
+    if ( !after_fork )
+    { int rc1, rc2;
 
-      if ( exception_term )
+      PL_LOCK(L_THREAD);
+      if ( info->status == PL_THREAD_RUNNING )
+	info->status = PL_THREAD_EXITED;	/* foreign pthread_exit() */
+      acknowledge = ld->exit_requested;
+      PL_UNLOCK(L_THREAD);
+
+      ld->critical++;   /* startCritical  */
+      info->in_exit_hooks = TRUE;
+      if ( LD == ld )
+	rc1 = callEventHook(PLEV_THIS_THREAD_EXIT);
+      else
+	rc1 = TRUE;
+      rc2 = callEventHook(PLEV_THREAD_EXIT, info);
+      if ( (!rc1 || !rc2) && exception_term )
       { Sdprintf("Event hook \"thread_finished\" left an exception\n");
 	PL_write_term(Serror, exception_term, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
 	PL_clear_exception();
       }
+      info->in_exit_hooks = FALSE;
+      ld->critical--;   /* endCritical */
+    } else
+    { acknowledge = FALSE;
+      info->detached = TRUE;		/* cleanup */
     }
-    run_thread_exit_hooks(ld);
-    info->in_exit_hooks = FALSE;
-    ld->critical--;   /* endCritical */
-  } else
-  { acknowledge = FALSE;
-    info->detached = TRUE;		/* cleanup */
+
+  #ifdef O_PROFILE
+    if ( ld->profile.active )
+      activateProfiler(FALSE, ld);
+  #endif
+
+    destroy_event_list(&ld->event.hook.onthreadexit);
+    cleanupLocalDefinitions(ld);
+
+    DEBUG(MSG_THREAD, Sdprintf("Destroying data\n"));
+    ld->magic = 0;
+    if ( ld->stacks.global.base )		/* otherwise not initialised */
+    { simpleMutexLock(&ld->thread.scan_lock);
+      freeStacks(ld);
+      simpleMutexUnlock(&ld->thread.scan_lock);
+    }
+    freePrologLocalData(ld);
+
+    /*PL_unregister_atom(ld->prompt.current);*/
+
+    freeThreadSignals(ld);
+    time = info->is_engine ? 0.0 : ThreadCPUTime(ld, CPU_USER);
+
+    if ( !after_fork )
+    { PL_LOCK(L_THREAD);
+      GD->statistics.threads_finished++;
+      assert(GD->statistics.threads_created - GD->statistics.threads_finished >= 1);
+      GD->statistics.thread_cputime += time;
+    }
+    destroy_thread_message_queue(&ld->thread.messages);
+    free_predicate_references(ld);
+    if ( ld->btrace_store )
+    { btrace_destroy(ld->btrace_store);
+      ld->btrace_store = NULL;
+    }
+  #ifdef O_LOCALE
+    if ( ld->locale.current )
+      releaseLocale(ld->locale.current);
+  #endif
+    info->thread_data = NULL;		/* avoid a loop */
+    info->has_tid = FALSE;		/* needed? */
+    if ( !after_fork )
+      PL_UNLOCK(L_THREAD);
+
+    if ( info->detached || acknowledge )
+      free_thread_info(info);
+
+    ld->thread.info = NULL;		/* help force a crash if ld used */
+    maybe_free_local_data(ld);
+
+    if ( acknowledge )			/* == canceled */
+    { DEBUG(MSG_CLEANUP_THREAD,
+	    Sdprintf("Acknowledge dead of %d\n", info->pl_tid));
+      pthread_detach(pthread_self());
+      sem_post(sem_canceled_ptr);
+    }
   }
 
-#ifdef O_PROFILE
-  if ( ld->profile.active )
-    activateProfiler(FALSE, ld);
-#endif
-
-  cleanupLocalDefinitions(ld);
-
-  DEBUG(MSG_THREAD, Sdprintf("Destroying data\n"));
-  ld->magic = 0;
-  if ( ld->stacks.global.base )		/* otherwise not initialised */
-  { simpleMutexLock(&ld->thread.scan_lock);
-    freeStacks(ld);
-    simpleMutexUnlock(&ld->thread.scan_lock);
-  }
-  freePrologLocalData(ld);
-
-  /*PL_unregister_atom(ld->prompt.current);*/
-
-  freeThreadSignals(ld);
-  time = info->is_engine ? 0.0 : ThreadCPUTime(ld, CPU_USER);
-
-  if ( !after_fork )
-  { PL_LOCK(L_THREAD);
-    GD->statistics.threads_finished++;
-    assert(GD->statistics.threads_created - GD->statistics.threads_finished >= 1);
-    GD->statistics.thread_cputime += time;
-  }
-  destroy_thread_message_queue(&ld->thread.messages);
-  free_predicate_references(ld);
-  if ( ld->btrace_store )
-  { btrace_destroy(ld->btrace_store);
-    ld->btrace_store = NULL;
-  }
-#ifdef O_LOCALE
-  if ( ld->locale.current )
-    releaseLocale(ld->locale.current);
-#endif
-  info->thread_data = NULL;		/* avoid a loop */
-  info->has_tid = FALSE;		/* needed? */
-  if ( !after_fork )
-    PL_UNLOCK(L_THREAD);
-
-  if ( info->detached || acknowledge )
-    free_thread_info(info);
-
-  ld->thread.info = NULL;		/* help force a crash if ld used */
-  maybe_free_local_data(ld);
-
-  if ( acknowledge )			/* == canceled */
-  { DEBUG(MSG_CLEANUP_THREAD,
-	  Sdprintf("Acknowledge dead of %d\n", info->pl_tid));
-    pthread_detach(pthread_self());
-    sem_post(sem_canceled_ptr);
-  }
+  TLD_set_LD(old_ld);
 }
 
 
@@ -902,7 +917,7 @@ A first step towards clean destruction of the system.  Ideally, we would
 like the following to happen:
 
     * Close-down all threads except for the main one
-	+ Have all thread_at_exit/1 hooks called
+	+ Have all thread exit hooks called
     * Run the at_halt/1 hooks in the main thread
     * Exit from the main thread.
 
@@ -2016,7 +2031,7 @@ pl_thread_create(term_t goal, term_t id, term_t options)
   info->module = PL_context();
   copy_local_data(ldnew, ldold, queue_max_size);
   if ( at_exit )
-    thread_at_exit(at_exit, ldnew);
+    register_event_hook(&ldnew->event.hook.onthreadexit, FALSE, at_exit, 0);
 
   pthread_attr_init(&attr);
   if ( info->detached )
@@ -2805,54 +2820,6 @@ error:
 		 *	     CLEANUP		*
 		 *******************************/
 
-typedef enum { EXIT_PROLOG, EXIT_C } exit_type;
-
-typedef struct _at_exit_goal
-{ struct _at_exit_goal *next;		/* Next in queue */
-  exit_type type;			/* Prolog or C */
-  union
-  { struct
-    { Module   module;			/* Module for running goal */
-      record_t goal;			/* Goal to run */
-    } prolog;
-    struct
-    { void (*function)(void *);		/* called function */
-      void *closure;			/* client data */
-    } c;
-  } goal;
-} at_exit_goal;
-
-
-static int
-thread_at_exit(term_t goal, PL_local_data_t *ld)
-{ GET_LD
-  Module m = NULL;
-  at_exit_goal *eg;
-
-  if ( !PL_strip_module(goal, &m, goal) )
-    return FALSE;
-
-  eg = allocHeapOrHalt(sizeof(*eg));
-  eg->next = NULL;
-  eg->type = EXIT_PROLOG;
-  eg->goal.prolog.module = m;
-  eg->goal.prolog.goal   = PL_record(goal);
-
-  eg->next = ld->thread.exit_goals;
-  ld->thread.exit_goals = eg;
-
-  succeed;
-}
-
-
-foreign_t
-pl_thread_at_exit(term_t goal)
-{ GET_LD
-
-  return thread_at_exit(goal, LD);
-}
-
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Request a function to run when the Prolog thread is about to detach, but
 still capable of running Prolog queries.
@@ -2861,111 +2828,12 @@ still capable of running Prolog queries.
 int
 PL_thread_at_exit(void (*function)(void *), void *closure, int global)
 { GET_LD
+  event_list **list = global ? &GD->event.hook.onthreadexit
+			     : &LD->event.hook.onthreadexit;
+  int (*func)() = (void *)function;
 
-  at_exit_goal *eg = allocHeapOrHalt(sizeof(*eg));
-
-  eg->next = NULL;
-  eg->type = EXIT_C;
-  eg->goal.c.function = function;
-  eg->goal.c.closure  = closure;
-
-  if ( global )
-  { PL_LOCK(L_THREAD);
-    eg->next = GD->thread.exit_goals;
-    GD->thread.exit_goals = eg;
-    PL_UNLOCK(L_THREAD);
-  } else
-  { eg->next = LD->thread.exit_goals;
-    LD->thread.exit_goals = eg;
-  }
-
-  succeed;
+  return register_event_function(list, FALSE, func, closure, 0);
 }
-
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Newly pushed hooks are executed  after   all  currently registered hooks
-have finished.
-
-Q: What to do with exceptions?
-Q: Should we limit the passes?
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static int
-run_exit_hooks(at_exit_goal *eg, int free)
-{ GET_LD
-  at_exit_goal *next;
-  term_t goal;
-  fid_t fid;
-
-  if ( !(goal = PL_new_term_ref()) ||
-       !(fid = PL_open_foreign_frame()) )
-    return FALSE;
-
-  for( ; eg; eg = next)
-  { next = eg->next;
-
-    switch(eg->type)
-    { case EXIT_PROLOG:
-      { int rc = PL_recorded(eg->goal.prolog.goal, goal);
-        if ( free )
-	  PL_erase(eg->goal.prolog.goal);
-	if ( rc )
-	{ DEBUG(MSG_THREAD,
-		{ Sdprintf("Calling exit goal: ");
-		  PL_write_term(Serror, goal, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
-		});
-
-	  callProlog(eg->goal.prolog.module, goal, PL_Q_NODEBUG, NULL);
-	}
-	break;
-      }
-      case EXIT_C:
-	(*eg->goal.c.function)(eg->goal.c.closure);
-        break;
-      default:
-	assert(0);
-    }
-
-    if ( exception_term )
-    { Sdprintf("Thread exit hook left an exception:\n");
-      PL_write_term(Serror, exception_term, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
-      PL_clear_exception();
-    }
-
-    if ( free )
-      freeHeap(eg, sizeof(*eg));
-
-    PL_rewind_foreign_frame(fid);
-  }
-
-  PL_discard_foreign_frame(fid);
-  PL_reset_term_refs(goal);
-
-  return TRUE;
-}
-
-
-
-static void
-run_thread_exit_hooks(PL_local_data_t *ld)
-{ GET_LD
-
-  if ( LD == ld )	/* if FALSE, we are called from another thread (create) */
-  { at_exit_goal *eg;
-    fid_t fid = PL_open_foreign_frame();
-
-    while( (eg = ld->thread.exit_goals) )
-    { ld->thread.exit_goals = NULL;	/* empty these */
-
-      run_exit_hooks(eg, TRUE);
-    }
-
-    run_exit_hooks(GD->thread.exit_goals, FALSE);
-    PL_close_foreign_frame(fid);
-  }
-}
-
 
 		 /*******************************
 		 *	   THREAD SIGNALS	*
@@ -3596,165 +3464,6 @@ static int dispatch_cond_wait(message_queue *queue,
 			      queue_wait_type wait,
 			      struct timespec *deadline);
 
-#ifdef __WINDOWS__
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Earlier implementations used pthread-win32 condition   variables.  As we
-need to dispatch messages while waiting for a condition variable we need
-to use pthread_cond_timedwait() which is   really  complicated and SLOW.
-Below is an  alternative  emulation   of  pthread_cond_wait()  that does
-dispatch messages. It is not fair  nor   correct,  but  neither of these
-problems bothers us considering the promises we make about Win32 message
-queues. This implementation is about 250   times faster, providing about
-the same performance as on native pthread implementations such as Linux.
-This work was sponsored by SSS, http://www.sss.co.nz
-
-This implementation is based on   the following, summarizing discussions
-on comp.lang.thread.
-
-Strategies for Implementing POSIX Condition Variables on Win32
-Douglas C. Schmidt and Irfan Pyarali
-Department of Computer Science
-Washington University, St. Louis, Missouri
-http://www.cs.wustl.edu/~schmidt/win32-cv-1.html
-
-It uses the second alternative, avoiding   the extra critical section as
-we assume the condition  variable  is   always  associated  to  the same
-critical section (associated to the same SWI-Prolog message queue).
-
-The resulting implementation suffers from the following problems:
-
-  * Unfairness
-    If two threads are waiting and two messages arrive on the queue it
-    is possible for one thread to consume both of them. We never
-    anticipated on `fair' behaviour in this sense in SWI-Prolog, so
-    we should not be bothered.  Nevertheless existing application may
-    have assumed fairness.
-
-  * Incorrectness
-    If two threads are waiting, a broadcast happens and a third thread
-    kicks in it is possible one of the threads does not get a wakeup.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-
-static int
-win32_cond_init(win32_cond_t *cv)
-{ cv->events[SIGNAL]    = CreateEvent(NULL, FALSE, FALSE, NULL);
-  cv->events[BROADCAST] = CreateEvent(NULL, TRUE,  FALSE, NULL);
-  cv->waiters = 0;
-
-  return 0;
-}
-
-
-static int
-win32_cond_destroy(win32_cond_t *cv)
-{ CloseHandle(cv->events[SIGNAL]);
-  CloseHandle(cv->events[BROADCAST]);
-
-  return 0;
-}
-
-
-#define WIN_MAX_WAIT (INFINITE-1)
-#define WIN_MAX_SECS (WIN_MAX_WAIT/1000-1)
-
-static int
-win32_cond_wait(win32_cond_t *cv,
-		CRITICAL_SECTION *external_mutex,
-	        struct timespec *deadline)
-{ int rc, last;
-  DWORD dwMilliseconds;
-  int short_wait;
-
-restart:
-  short_wait = FALSE;
-
-  if ( deadline )
-  { struct timespec now, diff;
-
-    get_current_timespec(&now);
-    timespec_diff(&diff, deadline, &now);
-    if ( timespec_sign(&diff) <= 0 )
-      return ETIMEDOUT;
-
-    if ( diff.tv_sec > WIN_MAX_SECS )
-    { dwMilliseconds = WIN_MAX_WAIT;
-      short_wait = TRUE;
-    } else
-    { dwMilliseconds = 1000*(DWORD)(diff.tv_sec) + (diff.tv_nsec)/1000000;
-    }
-  } else
-  { dwMilliseconds = INFINITE;
-  }
-
-  cv->waiters++;
-
-  LeaveCriticalSection(external_mutex);
-  rc = MsgWaitForMultipleObjects(2,
-				 cv->events,
-				 FALSE,	/* wait for either event */
-				 dwMilliseconds,
-				 QS_ALLINPUT);
-  DEBUG(MSG_THREAD, Sdprintf("dwMilliseconds=%ld, rc=%d\n", dwMilliseconds, rc));
-  if ( rc == WAIT_OBJECT_0+2 )
-  { GET_LD
-    MSG msg;
-
-    while( PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) )
-    { TranslateMessage(&msg);
-      DispatchMessage(&msg);
-    }
-
-    if ( is_signalled(LD) )
-    { EnterCriticalSection(external_mutex);
-      return EINTR;
-    }
-  } else if ( rc == WAIT_TIMEOUT )
-  { EnterCriticalSection(external_mutex);
-    if ( short_wait )
-      goto restart;
-    return ETIMEDOUT;
-  }
-
-  EnterCriticalSection(external_mutex);
-
-  cv->waiters--;
-  last = (rc == WAIT_OBJECT_0 + BROADCAST && cv->waiters == 0);
-  if ( last )
-    ResetEvent (cv->events[BROADCAST]);
-
-  return 0;
-}
-
-
-static int
-win32_cond_signal(win32_cond_t *cv)	/* must be holding associated mutex */
-{ if ( cv->waiters > 0 )
-    SetEvent(cv->events[SIGNAL]);
-
-  return 0;
-}
-
-
-static int
-win32_cond_broadcast(win32_cond_t *cv)	/* must be holding associated mutex */
-{ if ( cv->waiters > 0 )
-    SetEvent(cv->events[BROADCAST]);
-
-  return 0;
-}
-
-#define cv_broadcast	win32_cond_broadcast
-#define cv_signal	win32_cond_signal
-#define cv_init(cv,p)	win32_cond_init(cv)
-#define cv_destroy	win32_cond_destroy
-#else /*__WINDOWS__*/
-#define cv_broadcast	pthread_cond_broadcast
-#define cv_signal	pthread_cond_signal
-#define cv_init(cv,p)	pthread_cond_init(cv, p)
-#define cv_destroy	pthread_cond_destroy
-#endif /*__WINDOWS__*/
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This code deals with telling other threads something.  The interface:
 
@@ -3961,12 +3670,42 @@ carry_timespec_nanos(struct timespec *time)
 
 #ifdef __WINDOWS__
 
-static int
-dispatch_cond_wait(message_queue *queue, queue_wait_type wait, struct timespec *deadline)
-{ return win32_cond_wait((wait == QUEUE_WAIT_READ ? &queue->cond_var
-						  : &queue->drain_var),
-			 &queue->mutex,
-			 deadline);
+int
+cv_timedwait(CONDITION_VARIABLE *cond, CRITICAL_SECTION *mutex,
+	     struct timespec *deadline)
+{ GET_LD
+  struct timespec tmp_timeout;
+  DWORD api_timeout = 250;
+  int last = FALSE;
+  int rc;
+
+  for(;;)
+  { get_current_timespec(&tmp_timeout);
+    tmp_timeout.tv_nsec += 250000000;
+    carry_timespec_nanos(&tmp_timeout);
+
+    if ( deadline && timespec_cmp(&tmp_timeout, deadline) >= 0 )
+    { struct timespec d;
+
+      get_current_timespec(&tmp_timeout);
+      timespec_diff(&d, deadline, &tmp_timeout);
+      if ( timespec_sign(&d) > 0 )
+	api_timeout = (d.tv_nsec + 1000000 - 1) / 1000000;
+      else
+	return ETIMEDOUT;
+
+      last = TRUE;
+    }
+
+    rc = SleepConditionVariableCS(cond, mutex, api_timeout);
+
+    if ( is_signalled(LD) )
+      return EINTR;
+    if ( !rc && last )
+      return ETIMEDOUT;
+    if ( rc )
+      return 0;
+  }
 }
 
 #else /*__WINDOWS__*/
@@ -3974,34 +3713,32 @@ dispatch_cond_wait(message_queue *queue, queue_wait_type wait, struct timespec *
 /* return: 0: ok, EINTR: interrupted, ETIMEDOUT: timeout
 */
 
-static int
-dispatch_cond_wait(message_queue *queue, queue_wait_type wait, struct timespec *deadline)
+int
+cv_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
+	     struct timespec *deadline)
 { GET_LD
+
+  struct timespec tmp_timeout;
+  struct timespec *api_timeout = &tmp_timeout;
   int rc;
 
   for(;;)
-  { struct timespec tmp_timeout;
-    struct timespec *api_timeout = &tmp_timeout;
-
-    get_current_timespec(&tmp_timeout);
+  { get_current_timespec(&tmp_timeout);
     tmp_timeout.tv_nsec += 250000000;
     carry_timespec_nanos(&tmp_timeout);
 
     if ( deadline && timespec_cmp(&tmp_timeout, deadline) >= 0 )
       api_timeout = deadline;
 
-    rc = pthread_cond_timedwait((wait == QUEUE_WAIT_READ ? &queue->cond_var
-							 : &queue->drain_var),
-				&queue->mutex, api_timeout);
+    rc = pthread_cond_timedwait(cond, mutex, api_timeout);
 
     switch( rc )
     { case ETIMEDOUT:
 	if ( is_signalled(LD) )
 	  return EINTR;
-        if ( api_timeout == deadline )
+	if ( api_timeout == deadline )
 	  return ETIMEDOUT;
-
-	return 0;
+	continue;
       case 0:
 	if ( is_signalled(LD) )
 	  return EINTR;
@@ -4013,6 +3750,15 @@ dispatch_cond_wait(message_queue *queue, queue_wait_type wait, struct timespec *
 }
 
 #endif /*__WINDOWS__*/
+
+static int
+dispatch_cond_wait(message_queue *queue, queue_wait_type wait,
+		   struct timespec *deadline)
+{ return cv_timedwait((wait == QUEUE_WAIT_READ ? &queue->cond_var
+					       : &queue->drain_var),
+		      &queue->mutex,
+		      deadline);
+}
 
 #ifdef O_QUEUE_STATS
 static uint64_t getmsg  = 0;
