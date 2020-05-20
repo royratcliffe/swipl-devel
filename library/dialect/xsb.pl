@@ -47,16 +47,18 @@
             compiler_options/1,			% +Options
 
             xsb_import/2,                       % +Preds, From
+            xsb_set_prolog_flag/2,              % +Flag, +Value
 
             fail_if/1,				% :Goal
 
-            not_exists/1,			% :Goal
             sk_not/1,				% :Goal
             gc_tables/1,                        % -Remaining
 
             cputime/1,				% -Seconds
             walltime/1,				% -Seconds
             timed_call/2,                       % :Goal, :Options
+
+            (thread_shared)/1,                  % :Spec
 
             debug_ctl/2,                        % +Option, +Value
 
@@ -66,6 +68,8 @@
             path_sysop/2,                       % +Op, ?Value
             path_sysop/3,                       % +Op, ?Value1, ?Value2
 
+            abort/1,				% +Message
+
             op(1050,  fy, import),
             op(1050,  fx, export),
             op(1040, xfx, from),
@@ -74,12 +78,13 @@
             op(1100,  fx, mode),                % ignored
             op(1045, xfx, as),
             op(900,   fy, tnot),
-            op(900,   fy, not)                  % defined as op in XSB
+            op(900,   fy, not),                 % defined as op in XSB
+            op(1100,  fx, thread_shared)
           ]).
 :- use_module(library(error)).
 :- use_module(library(debug)).
 :- use_module(library(dialect/xsb/source)).
-:- use_module(library(dialect/xsb/tables)).
+:- use_module(library(tables)).
 :- use_module(library(dialect/xsb/timed_call)).
 :- use_module(library(aggregate)).
 :- use_module(library(option)).
@@ -100,8 +105,9 @@ system](http://xsb.sourceforge.net/)
     load_dync(:),
     load_dync(:, +),
 
+    thread_shared(:),
+
     fail_if(0),                         % Meta predicates
-    not_exists(0),
     sk_not(0).
 
 
@@ -174,6 +180,8 @@ user:goal_expansion(In, Out) :-
 
 xsb_mapped_predicate(expand_file_name(File, Expanded),
                      xsb_expand_file_name(File, Expanded)).
+xsb_mapped_predicate(set_prolog_flag(Flag, Value),
+                     xsb_set_prolog_flag(Flag, Value)).
 xsb_mapped_predicate(abolish_module_tables(UserMod),
                      abolish_module_tables(user)) :-
     UserMod == usermod.
@@ -307,6 +315,21 @@ map_module(XSB, Module) :-
     !.
 map_module(XSB, Module) :-
     assertz(mapped__module(XSB, Module)).
+
+
+%!  xsb_set_prolog_flag(+Flag, +Value)
+%
+%   Map some XSB Prolog flags to their SWI-Prolog's equivalents.
+
+xsb_set_prolog_flag(unify_with_occurs_check, XSBVal) :-
+    !,
+    map_bool(XSBVal, Val),
+    set_prolog_flag(occurs_check, Val).
+xsb_set_prolog_flag(Flag, Value) :-
+    set_prolog_flag(Flag, Value).
+
+map_bool(on, true).
+map_bool(off, false).
 
 
 		 /*******************************
@@ -470,15 +493,11 @@ fail_if(P) :-
 		 *      TABLING BUILT-INS	*
 		 *******************************/
 
-%!  not_exists(:P).
-%!  sk_not(:P).
+%!  sk_not(:P) is semidet.
 %
-%   XSB tabled negation. According to the XSB manual, sk_not/1 is an old
-%   name for not_exists/1. The predicates   tnot/1  and not_exists/1 are
-%   not precisely the same. We ignore that for now.
-
-not_exists(P) :-
-    tnot(P).
+%   Sound negation with non-ground P.  Equivalent to not_exists/1.
+%
+%   @deprecated New code should use not_exists/1.
 
 sk_not(P) :-
     not_exists(P).
@@ -536,6 +555,15 @@ debug_ctl(Option, Value) :-
     debug(xsb(compat), 'XSB: not implemented: ~p',
           [ debug_ctl(Option, Value) ]).
 
+%!  thread_shared(+Spec)
+%
+%   Declare a dynamic predicate  as  shared.   This  is  the default for
+%   SWI-Prolog.
+
+thread_shared(Spec) :-
+    dynamic(Spec).
+
+
 %!  fmt_write(+Fmt, +Term) is det.
 %!  fmt_write(+Stream, +Fmt, +Term) is det.
 %
@@ -543,8 +571,7 @@ debug_ctl(Option, Value) :-
 %   arguments of Term.  We map this to format/2,3.
 %
 %   @bug We need to complete the  translation of the fmt_write sequences
-%   to format/2,3 sequences. Probably we should   also  cache the format
-%   translation.
+%   to format/2,3 sequences.
 
 fmt_write(Fmt, Term) :-
     fmt_write(current_output, Fmt, Term).
@@ -554,9 +581,20 @@ fmt_write(Stream, Fmt, Term) :-
     ->  Term =.. [_|Args]
     ;   Args = [Term]
     ),
-    string_codes(Fmt, Codes),
-    phrase(format_fmt(Format, []), Codes),
+    fmt_write_format(Fmt, Format),
     format(Stream, Format, Args).
+
+:- dynamic
+    fmt_write_cache/2.
+
+fmt_write_format(Fmt, Format) :-
+    fmt_write_cache(Fmt, Format),
+    !.
+fmt_write_format(Fmt, Format) :-
+    string_codes(Fmt, FmtCodes),
+    phrase(format_fmt(Codes, []), FmtCodes),
+    atom_codes(Format, Codes),
+    asserta(fmt_write_cache(Fmt, Format)).
 
 format_fmt(Format, Tail) -->
     "%",
@@ -662,6 +700,13 @@ path_sysop(dirname, Path, Dir) :-
 path_sysop(expand, Name, Path) :-
     absolute_file_name(Name, Path).
 
+%!  abort(+Message:atomic)
+%
+%   Abort with a message
+
+abort(Message) :-
+    print_message(error, aborted(Message)),
+    abort.
 
 		 /*******************************
 		 *           MESSAGES		*

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam
+    Copyright (c)  1985-2020, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -206,14 +206,39 @@ non_terminal(Spec)       :- '$set_pattr'(Spec, pred, non_terminal(true)).
 
 '$attr_option'(incremental, incremental(true)).
 '$attr_option'(opaque, incremental(false)).
-'$attr_option'(abstract(Level), abstract(true)) :-
-    '$must_be'(between(0,0), Level).
+'$attr_option'(abstract(Level0), abstract(Level)) :-
+    '$table_option'(Level0, Level).
+'$attr_option'(subgoal_abstract(Level0), subgoal_abstract(Level)) :-
+    '$table_option'(Level0, Level).
+'$attr_option'(answer_abstract(Level0), answer_abstract(Level)) :-
+    '$table_option'(Level0, Level).
+'$attr_option'(max_answers(Level0), max_answers(Level)) :-
+    '$table_option'(Level0, Level).
 '$attr_option'(volatile, volatile(true)).
 '$attr_option'(multifile, multifile(true)).
 '$attr_option'(discontiguous, discontiguous(true)).
 '$attr_option'(shared, thread_local(false)).
 '$attr_option'(local, thread_local(true)).
 '$attr_option'(private, thread_local(true)).
+
+'$table_option'(Value0, _Value) :-
+    var(Value0),
+    !,
+    '$instantiation_error'(Value0).
+'$table_option'(Value0, Value) :-
+    integer(Value0),
+    Value0 >= 0,
+    !,
+    Value = Value0.
+'$table_option'(off, -1) :-
+    !.
+'$table_option'(false, -1) :-
+    !.
+'$table_option'(infinite, -1) :-
+    !.
+'$table_option'(Value, _) :-
+    '$domain_error'(nonneg_or_false, Value).
+
 
 %!  '$pattr_directive'(+Spec, +Module) is det.
 %
@@ -808,43 +833,12 @@ default_module(Me, Super) :-
     !,
     Action = Action0.
 '$undefined_procedure'(Module, Name, Arity, Action) :-
-    current_prolog_flag(autoload, true),
-    '$autoload'(Module, Name, Arity),
+    \+ current_prolog_flag(autoload, false),
+    '$autoload'(Module:Name/Arity),
     !,
     Action = retry.
 '$undefined_procedure'(_, _, _, error).
 
-'$autoload'(Module, Name, Arity) :-
-    source_location(File, _Line),
-    !,
-    setup_call_cleanup(
-        '$start_aux'(File, Context),
-        '$autoload2'(Module, Name, Arity),
-        '$end_aux'(File, Context)).
-'$autoload'(Module, Name, Arity) :-
-    '$autoload2'(Module, Name, Arity).
-
-'$autoload2'(Module, Name, Arity) :-
-    '$find_library'(Module, Name, Arity, LoadModule, Library),
-    functor(Head, Name, Arity),
-    '$update_autoload_level'([autoload(true)], Old),
-    (   current_prolog_flag(verbose_autoload, true)
-    ->  Level = informational
-    ;   Level = silent
-    ),
-    print_message(Level, autoload(Module:Name/Arity, Library)),
-    '$compilation_mode'(OldComp, database),
-    (   Module == LoadModule
-    ->  ensure_loaded(Module:Library)
-    ;   (   '$get_predicate_attribute'(LoadModule:Head, defined, 1),
-            \+ '$loading'(Library)
-        ->  Module:import(LoadModule:Name/Arity)
-        ;   use_module(Module:Library, [Name/Arity])
-        )
-    ),
-    '$set_compilation_mode'(OldComp),
-    '$set_autoload_level'(Old),
-    '$c_current_predicate'(_, Module:Head).
 
 %!  '$loading'(+Library)
 %
@@ -928,14 +922,24 @@ default_module(Me, Super) :-
                  *       FILE_SEARCH_PATH       *
                  *******************************/
 
-:- dynamic user:file_search_path/2.
-:- multifile user:file_search_path/2.
+:- dynamic
+    user:file_search_path/2,
+    user:library_directory/1.
+:- multifile
+    user:file_search_path/2,
+    user:library_directory/1.
 
 user:(file_search_path(library, Dir) :-
         library_directory(Dir)).
 user:file_search_path(swi, Home) :-
     current_prolog_flag(home, Home).
+user:file_search_path(swi, Home) :-
+    current_prolog_flag(shared_home, Home).
+user:file_search_path(library, app_config(lib)).
+user:file_search_path(library, swi(library)).
+user:file_search_path(library, swi(library/clp)).
 user:file_search_path(foreign, swi(ArchLib)) :-
+    \+ current_prolog_flag(windows, true),
     current_prolog_flag(arch, Arch),
     atom_concat('lib/', Arch, ArchLib).
 user:file_search_path(foreign, swi(SoLib)) :-
@@ -949,15 +953,99 @@ user:file_search_path(path, Dir) :-
     ->  atomic_list_concat(Dirs, (;), Path)
     ;   atomic_list_concat(Dirs, :, Path)
     ),
-    '$member'(Dir, Dirs),
-    '$no-null-bytes'(Dir).
+    '$member'(Dir, Dirs).
+user:file_search_path(user_app_data, Dir) :-
+    '$xdg_prolog_directory'(data, Dir).
+user:file_search_path(common_app_data, Dir) :-
+    '$xdg_prolog_directory'(common_data, Dir).
+user:file_search_path(user_app_config, Dir) :-
+    '$xdg_prolog_directory'(config, Dir).
+user:file_search_path(common_app_config, Dir) :-
+    '$xdg_prolog_directory'(common_config, Dir).
+user:file_search_path(app_data, user_app_data('.')).
+user:file_search_path(app_data, common_app_data('.')).
+user:file_search_path(app_config, user_app_config('.')).
+user:file_search_path(app_config, common_app_config('.')).
+% backward compatibility
+user:file_search_path(app_preferences, user_app_config('.')).
+user:file_search_path(user_profile, app_preferences('.')).
 
-'$no-null-bytes'(Dir) :-
-    sub_atom(Dir, _, _, _, '\u0000'),
-    !,
-    print_message(warning, null_byte_in_path(Dir)),
-    fail.
-'$no-null-bytes'(_).
+'$xdg_prolog_directory'(Which, Dir) :-
+    '$xdg_directory'(Which, XDGDir),
+    '$make_config_dir'(XDGDir),
+    '$ensure_slash'(XDGDir, XDGDirS),
+    atom_concat(XDGDirS, 'swi-prolog', Dir),
+    '$make_config_dir'(Dir).
+
+% config
+'$xdg_directory'(config, Home) :-
+    current_prolog_flag(windows, true),
+    catch(win_folder(appdata, Home), _, fail),
+    !.
+'$xdg_directory'(config, Home) :-
+    getenv('XDG_CONFIG_HOME', Home).
+'$xdg_directory'(config, Home) :-
+    expand_file_name('~/.config', [Home]).
+% data
+'$xdg_directory'(data, Home) :-
+    current_prolog_flag(windows, true),
+    catch(win_folder(local_appdata, Home), _, fail),
+    !.
+'$xdg_directory'(data, Home) :-
+    getenv('XDG_DATA_HOME', Home).
+'$xdg_directory'(data, Home) :-
+    expand_file_name('~/.local', [Local]),
+    '$make_config_dir'(Local),
+    atom_concat(Local, '/share', Home),
+    '$make_config_dir'(Home).
+% common data
+'$xdg_directory'(common_data, Dir) :-
+    current_prolog_flag(windows, true),
+    catch(win_folder(common_appdata, Dir), _, fail),
+    !.
+'$xdg_directory'(common_data, Dir) :-
+    '$existing_dir_from_env_path'('XDG_DATA_DIRS',
+                                  [ '/usr/local/share',
+                                    '/usr/share'
+                                  ],
+                                  Dir).
+% common config
+'$xdg_directory'(common_data, Dir) :-
+    current_prolog_flag(windows, true),
+    catch(win_folder(common_appdata, Dir), _, fail),
+    !.
+'$xdg_directory'(common_data, Dir) :-
+    '$existing_dir_from_env_path'('XDG_CONFIG_DIRS', ['/etc/xdg'], Dir).
+
+'$existing_dir_from_env_path'(Env, Defaults, Dir) :-
+    (   getenv(Env, Path)
+    ->  '$path_sep'(Sep),
+        atomic_list_concat(Dirs, Sep, Path)
+    ;   Dirs = Defaults
+    ),
+    '$member'(Dir, Dirs),
+    exists_directory(Dir).
+
+'$path_sep'(Char) :-
+    (   current_prolog_flag(windows, true)
+    ->  Char = ';'
+    ;   Char = ':'
+    ).
+
+'$make_config_dir'(Dir) :-
+    exists_directory(Dir),
+    !.
+'$make_config_dir'(Dir) :-
+    file_directory_name(Dir, Parent),
+    '$my_file'(Parent),
+    catch(make_directory(Dir), _, fail).
+
+'$ensure_slash'(Dir, DirS) :-
+    (   sub_atom(Dir, _, _, 0, /)
+    ->  DirS = Dir
+    ;   atom_concat(Dir, /, DirS)
+    ).
+
 
 %!  expand_file_search_path(+Spec, -Expanded) is nondet.
 %
@@ -1567,22 +1655,29 @@ compiling :-
     '$load_input'/2.
 
 '$open_source'(stream(Id, In, Opts), In,
-               restore(In, StreamState, Id, Ref, Opts), Parents, Options) :-
+               restore(In, StreamState, Id, Ref, Opts), Parents, _Options) :-
     !,
     '$context_type'(Parents, ContextType),
     '$push_input_context'(ContextType),
-    '$set_encoding'(In, Options),
     '$prepare_load_stream'(In, Id, StreamState),
     asserta('$load_input'(stream(Id), In), Ref).
 '$open_source'(Path, In, close(In, Path, Ref), Parents, Options) :-
     '$context_type'(Parents, ContextType),
     '$push_input_context'(ContextType),
-    open(Path, read, In),
+    '$open_source'(Path, In, Options),
     '$set_encoding'(In, Options),
     asserta('$load_input'(Path, In), Ref).
 
 '$context_type'([], load_file) :- !.
 '$context_type'(_, include).
+
+:- multifile prolog:open_source_hook/3.
+
+'$open_source'(Path, In, Options) :-
+    prolog:open_source_hook(Path, In, Options),
+    !.
+'$open_source'(Path, In, _Options) :-
+    open(Path, read, In).
 
 '$close_source'(close(In, Id, Ref), Message) :-
     erase(Ref),
@@ -2143,22 +2238,39 @@ load_files(Module:Files, Options) :-
     '$qdo_load_file'(File, File, Module, Action, Options),
     '$run_initialization'(File, Action, Options).
 '$load_file'(File, Module, Options) :-
+    '$resolved_source_path'(File, FullFile, Options),
+    !,
+    '$already_loaded'(File, FullFile, Module, Options).
+'$load_file'(File, Module, Options) :-
+    '$resolve_source_path'(File, FullFile, Options),
+    '$mt_load_file'(File, FullFile, Module, Options),
+    '$register_resource_file'(FullFile).
+
+%!  '$resolved_source_path'(+File, -FullFile, +Options) is semidet.
+%
+%   True when File has already been resolved to an absolute path.
+
+'$resolved_source_path'(File, FullFile, Options) :-
     '$resolved_source_path'(File, FullFile),
     (   '$source_file_property'(FullFile, from_state, true)
     ;   '$source_file_property'(FullFile, resource, true)
     ;   '$option'(if(If), Options, true),
         '$noload'(If, FullFile, Options)
     ),
-    !,
-    '$already_loaded'(File, FullFile, Module, Options).
-'$load_file'(File, Module, Options) :-
+    !.
+
+%!  '$resolve_source_path'(+File, -FullFile, Options) is det.
+%
+%   Resolve a source file specification to   an absolute path. May throw
+%   existence and other errors.
+
+'$resolve_source_path'(File, FullFile, _Options) :-
     absolute_file_name(File, FullFile,
                        [ file_type(prolog),
                          access(read)
                        ]),
-    '$register_resolved_source_path'(File, FullFile),
-    '$mt_load_file'(File, FullFile, Module, Options),
-    '$register_resource_file'(FullFile).
+    '$register_resolved_source_path'(File, FullFile).
+
 
 '$register_resolved_source_path'(File, FullFile) :-
     '$resolved_source_path'(File, FullFile),
@@ -2614,7 +2726,7 @@ load_files(Module:Files, Options) :-
 '$set_dialect'(Options) :-
     memberchk(dialect(Dialect), Options),
     !,
-    expects_dialect(Dialect).               % Autoloaded from library
+    '$expects_dialect'(Dialect).
 '$set_dialect'(_).
 
 '$load_id'(stream(Id, _, _), Id, Modified, Options) :-
@@ -2852,18 +2964,30 @@ load_files(Module:Files, Options) :-
 '$set_dialect'(Dialect, State) :-
     '$compilation_mode'(qlf, database),
     !,
-    expects_dialect(Dialect),
+    '$expects_dialect'(Dialect),
     '$compilation_mode'(_, qlf),
     nb_setarg(6, State, Dialect).
 '$set_dialect'(Dialect, _) :-
-    expects_dialect(Dialect).
+    '$expects_dialect'(Dialect).
 
 '$qset_dialect'(State) :-
     '$compilation_mode'(qlf),
     arg(6, State, Dialect), Dialect \== (-),
     !,
-    '$add_directive_wic'(expects_dialect(Dialect)).
+    '$add_directive_wic'('$expects_dialect'(Dialect)).
 '$qset_dialect'(_).
+
+'$expects_dialect'(Dialect) :-
+    Dialect == swi,
+    !,
+    set_prolog_flag(emulated_dialect, Dialect).
+'$expects_dialect'(Dialect) :-
+    current_predicate(expects_dialect/1),
+    !,
+    expects_dialect(Dialect).
+'$expects_dialect'(Dialect) :-
+    use_module(library(dialect), [expects_dialect/1]),
+    expects_dialect(Dialect).
 
 
                  /*******************************
@@ -3644,6 +3768,11 @@ compile_aux_clauses(Clauses) :-
     ->  true
     ;   '$type_error'(callable, X)
     ).
+'$must_be'(acyclic, X) :- !,
+    (   acyclic_term(X)
+    ->  true
+    ;   '$domain_error'(acyclic_term, X)
+    ).
 '$must_be'(oneof(Type, Domain, List), X) :- !,
     '$must_be'(Type, X),
     (   memberchk(X, List)
@@ -3660,6 +3789,16 @@ compile_aux_clauses(Clauses) :-
     ->  true
     ;   '$instantiation_error'(X)
     ).
+'$must_be'(filespec, X) :- !,
+    (   (   atom(X)
+        ;   string(X)
+        ;   compound(X),
+            compound_name_arity(X, _, 1)
+        )
+    ->  true
+    ;   '$type_error'(filespec, X)
+    ).
+
 % Use for debugging
 %'$must_be'(Type, _X) :- format('Unknown $must_be type: ~q~n', [Type]).
 
@@ -3838,7 +3977,9 @@ length(_, Length) :-
     user:prolog_list_goal(Goal),
     !.
 '$prolog_list_goal'(Goal) :-
-    user:listing(Goal).
+    use_module(library(listing), [listing/1]),
+    @(listing(Goal), user).
+
 
 		 /*******************************
 		 *              MISC		*

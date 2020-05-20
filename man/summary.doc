@@ -53,61 +53,67 @@ suggest predicates from a keyword.
 \predicatesummary{abolish_module_tables}{1}{Abolish all tables in a module}
 \predicatesummary{abolish_nonincremental_tables}{0}{Abolish non-auttomatic tables}
 \predicatesummary{abolish_nonincremental_tables}{1}{Abolish non-auttomatic tables}
+\predicatesummary{abolish_private_tables}{0}{Abolish tables of this thread}
+\predicatesummary{abolish_shared_tables}{0}{Abolish tables shared between threads}
 \predicatesummary{abolish_table_subgoals}{1}{Abolish tables for a goal}
 \predicatesummary{abort}{0}{Abort execution, return to top level}
 \predicatesummary{absolute_file_name}{2}{Get absolute path name}
-\predicatesummary{absolute_file_name}{3}{Get absolute path name with
-options} \predicatesummary{access_file}{2}{Check access permissions of a
-file} \predicatesummary{acyclic_term}{1}{Test term for cycles}
-\predicatesummary{add_import_module}{3}{Add module to the auto-import
-list} \predicatesummary{add_nb_set}{2}{Add term to a non-backtrackable
-set} \predicatesummary{add_nb_set}{3}{Add term to a non-backtrackable
-set} \predicatesummary{append}{1}{Append to a file}
+\predicatesummary{absolute_file_name}{3}{Get absolute path name with options}
+\predicatesummary{answer_count_restraint}{0}{Undefined answer due to \const{max_answers}}
+\predicatesummary{access_file}{2}{Check access permissions of a file}
+\predicatesummary{acyclic_term}{1}{Test term for cycles}
+\predicatesummary{add_import_module}{3}{Add module to the auto-import list}
+\predicatesummary{add_nb_set}{2}{Add term to a non-backtrackable set}
+\predicatesummary{add_nb_set}{3}{Add term to a non-backtrackable set}
+\predicatesummary{append}{1}{Append to a file}
 \predicatesummary{apply}{2}{Call goal with additional arguments}
 \predicatesummary{apropos}{1}{\pllib{online_help} Search manual}
 \predicatesummary{arg}{3}{Access argument of a term}
 \predicatesummary{assoc_to_list}{2}{Convert association tree to list}
 \predicatesummary{assert}{1}{Add a clause to the database}
-\predicatesummary{assert}{2}{Add a clause to the database, give
-reference} \predicatesummary{asserta}{1}{Add a clause to the database
-(first)} \predicatesummary{asserta}{2}{Add a clause to the database
-(first)} \predicatesummary{assertion}{1}{Make assertions about your
-program} \predicatesummary{assertz}{1}{Add a clause to the database
-(last)} \predicatesummary{assertz}{2}{Add a clause to the database
-(last)} \predicatesummary{attach_console}{0}{Attach I/O console to
-thread} \predicatesummary{attach_packs}{0}{Attach add-ons}
+\predicatesummary{assert}{2}{Add a clause to the database, give reference}
+\predicatesummary{asserta}{1}{Add a clause to the database (first)}
+\predicatesummary{asserta}{2}{Add a clause to the database (first)}
+\predicatesummary{assertion}{1}{Make assertions about your program}
+\predicatesummary{assertz}{1}{Add a clause to the database (last)}
+\predicatesummary{assertz}{2}{Add a clause to the database (last)}
+\predicatesummary{attach_console}{0}{Attach I/O console to thread}
+\predicatesummary{attach_packs}{0}{Attach add-ons}
 \predicatesummary{attach_packs}{1}{Attach add-ons from directory}
 \predicatesummary{attach_packs}{2}{Attach add-ons from directory}
 \predicatesummary{attribute_goals}{3}{Project attributes to goals}
-\predicatesummary{attr_unify_hook}{2}{Attributed variable unification
-hook} \predicatesummary{attr_portray_hook}{2}{Attributed variable print
-hook} \predicatesummary{attvar}{1}{Type test for attributed variable}
+\predicatesummary{attr_unify_hook}{2}{Attributed variable unification hook}
+\predicatesummary{attr_portray_hook}{2}{Attributed variable print hook}
+\predicatesummary{attvar}{1}{Type test for attributed variable}
 \predicatesummary{at_end_of_stream}{0}{Test for end of file on input}
 \predicatesummary{at_end_of_stream}{1}{Test for end of file on stream}
 \predicatesummary{at_halt}{1}{Register goal to run at halt/1}
 \predicatesummary{atom}{1}{Type check for an atom}
-\predicatesummary{atom_chars}{2}{Convert between atom and list of
-characters} \predicatesummary{atom_codes}{2}{Convert between atom and
-list of characters codes} \predicatesummary{atom_concat}{3}{Contatenate
-two atoms} \predicatesummary{atom_length}{2}{Determine length of an
-atom} \predicatesummary{atom_number}{2}{Convert between atom and number}
+\predicatesummary{atom_chars}{2}{Convert between atom and list of characters}
+\predicatesummary{atom_codes}{2}{Convert between atom and list of characters codes}
+\predicatesummary{atom_concat}{3}{Contatenate two atoms}
+\predicatesummary{atom_length}{2}{Determine length of an atom}
+\predicatesummary{atom_number}{2}{Convert between atom and number}
 \predicatesummary{atom_prefix}{2}{Test for start of atom}
 \predicatesummary{atom_string}{2}{Conversion between atom and string}
 \predicatesummary{atom_to_term}{3}{Convert between atom and term}
 \predicatesummary{atomic}{1}{Type check for primitive}
-\predicatesummary{atomic_concat}{3}{Concatenate two atomic values to an
-atom} \predicatesummary{atomic_list_concat}{2}{Append a list of atomics}
-\predicatesummary{atomic_list_concat}{3}{Append a list of atomics with
-separator} \predicatesummary{atomics_to_string}{2}{Concatenate list of
-inputs to a string} \predicatesummary{atomics_to_string}{3}{Concatenate
-list of inputs to a string} \predicatesummary{autoload}{0}{Autoload all
-predicates now} \predicatesummary{autoload_path}{1}{Add directories for
-autoloading} \predicatesummary{b_getval}{2}{Fetch backtrackable global
-variable} \predicatesummary{b_set_dict}{3}{Destructive assignment on a
-dict} \predicatesummary{b_setval}{2}{Assign backtrackable global
-variable} \predicatesummary{bagof}{3}{Find all solutions to a goal}
+\predicatesummary{atomic_concat}{3}{Concatenate two atomic values to an atom}
+\predicatesummary{atomic_list_concat}{2}{Append a list of atomics}
+\predicatesummary{atomic_list_concat}{3}{Append a list of atomics with separator}
+\predicatesummary{atomics_to_string}{2}{Concatenate list of inputs to a string}
+\predicatesummary{atomics_to_string}{3}{Concatenate list of inputs to a string}
+\predicatesummary{autoload}{1}{Declare a file for autoloading}
+\predicatesummary{autoload}{2}{Declare a file for autoloading specific predicates}
+\predicatesummary{autoload_all}{0}{Autoload all predicates now}
+\predicatesummary{autoload_path}{1}{Add directories for autoloading}
+\predicatesummary{b_getval}{2}{Fetch backtrackable global variable}
+\predicatesummary{b_set_dict}{3}{Destructive assignment on a dict}
+\predicatesummary{b_setval}{2}{Assign backtrackable global variable}
+\predicatesummary{bagof}{3}{Find all solutions to a goal}
 \predicatesummary{between}{3}{Integer range checking/generating}
 \predicatesummary{blob}{2}{Type check for a blob}
+\predicatesummary{bounded_number}{3}{Number between bounds}
 \predicatesummary{break}{0}{Start interactive top level}
 \predicatesummary{break_hook}{6}{\hook{prolog} Debugger hook}
 \predicatesummary{byte_count}{2}{Byte-position in a stream}
@@ -258,6 +264,7 @@ or clause} \predicatesummary{exception}{3}{\hook{user} Handle runtime
 exceptions} \predicatesummary{exists_directory}{1}{Check existence of
 directory} \predicatesummary{exists_file}{1}{Check existence of file}
 \predicatesummary{exists_source}{1}{Check existence of a Prolog source}
+\predicatesummary{exists_source}{2}{Check existence of a Prolog source}
 \predicatesummary{expand_answer}{2}{Expand answer of query}
 \predicatesummary{expand_file_name}{2}{Wildcard expansion of file names}
 \predicatesummary{expand_file_search_path}{2}{Wildcard expansion of file
@@ -289,15 +296,17 @@ solutions} \predicatesummary{findnsols}{5}{Difference list version of
 findnsols/4} \predicatesummary{fill_buffer}{1}{Fill the input buffer of
 a stream} \predicatesummary{flag}{3}{Simple global variable system}
 \predicatesummary{float}{1}{Type check for a floating point number}
-\predicatesummary{flush_output}{0}{Output pending characters on current
-stream} \predicatesummary{flush_output}{1}{Output pending characters on
-specified stream} \predicatesummary{forall}{2}{Prove goal for all
-solutions of another goal} \predicatesummary{format}{1}{Formatted
-output} \predicatesummary{format}{2}{Formatted output with arguments}
+\predicatesummary{float_class}{2}{Classify (special) floats}
+\predicatesummary{float_parts}{4}{Get mantissa and exponent of a float}
+\predicatesummary{flush_output}{0}{Output pending characters on current stream}
+\predicatesummary{flush_output}{1}{Output pending characters on specified stream}
+\predicatesummary{forall}{2}{Prove goal for all solutions of another goal}
+\predicatesummary{format}{1}{Formatted output}
+\predicatesummary{format}{2}{Formatted output with arguments}
 \predicatesummary{format}{3}{Formatted output on a stream}
 \predicatesummary{format_time}{3}{C strftime() like date/time formatter}
-\predicatesummary{format_time}{4}{date/time formatter with explicit
-locale} \predicatesummary{format_predicate}{2}{Program format/[1,2]}
+\predicatesummary{format_time}{4}{date/time formatter with explicit locale}
+\predicatesummary{format_predicate}{2}{Program format/[1,2]}
 \predicatesummary{term_attvars}{2}{Find attributed variables in a term}
 \predicatesummary{term_variables}{2}{Find unbound variables in a term}
 \predicatesummary{term_variables}{3}{Find unbound variables in a term}
@@ -402,8 +411,8 @@ objects} \predicatesummary{locale_sort}{2}{Language dependent sort of
 atoms} \predicatesummary{make}{0}{Reconsult all changed source files}
 \predicatesummary{make_directory}{1}{Create a folder on the file system}
 \predicatesummary{make_library_index}{1}{Create autoload file INDEX.pl}
-\predicatesummary{make_library_index}{2}{Create selective autoload file
-INDEX.pl} \predicatesummary{map_assoc}{2}{Map association tree}
+\predicatesummary{malloc_property}{1}{Property of the allocator}
+\predicatesummary{make_library_index}{2}{Create selective autoload file INDEX.pl} \predicatesummary{map_assoc}{2}{Map association tree}
 \predicatesummary{map_assoc}{3}{Map association tree}
 \predicatesummary{dict_create}{3}{Create a dict from data}
 \predicatesummary{dict_pairs}{3}{Convert between dict and list of pairs}
@@ -437,23 +446,21 @@ a thread-synchronisation device}
 \predicatesummary{mutex_lock}{1}{Become owner of a mutex}
 \predicatesummary{mutex_property}{2}{Query mutex properties}
 \predicatesummary{mutex_statistics}{0}{Print statistics on mutex usage}
-\predicatesummary{mutex_trylock}{1}{Become owner of a mutex
-(non-blocking)} \predicatesummary{mutex_unlock}{1}{Release ownership of
-mutex} \predicatesummary{mutex_unlock_all}{0}{Release ownership of all
-mutexes} \predicatesummary{name}{2}{Convert between atom and list of
-character codes} \predicatesummary{nb_current}{2}{Enumerate
-non-backtrackable global variables}
-\predicatesummary{nb_delete}{1}{Delete a non-backtrackable global
-variable} \predicatesummary{nb_getval}{2}{Fetch non-backtrackable global
-variable} \predicatesummary{nb_link_dict}{3}{Non-backtrackable
-assignment to dict} \predicatesummary{nb_linkarg}{3}{Non-backtrackable
-assignment to term} \predicatesummary{nb_linkval}{2}{Assign
-non-backtrackable global variable}
-\predicatesummary{nb_set_to_list}{2}{Convert non-backtrackable set to
-list} \predicatesummary{nb_set_dict}{3}{Non-backtrackable assignment to
-dict} \predicatesummary{nb_setarg}{3}{Non-backtrackable assignment to
-term} \predicatesummary{nb_setval}{2}{Assign non-backtrackable global
-variable} \predicatesummary{nl}{0}{Generate a newline}
+\predicatesummary{mutex_trylock}{1}{Become owner of a mutex (non-blocking)}
+\predicatesummary{mutex_unlock}{1}{Release ownership of mutex}
+\predicatesummary{mutex_unlock_all}{0}{Release ownership of all mutexes}
+\predicatesummary{name}{2}{Convert between atom and list of character codes}
+\predicatesummary{nb_current}{2}{Enumerate non-backtrackable global variables}
+\predicatesummary{nb_delete}{1}{Delete a non-backtrackable global variable}
+\predicatesummary{nb_getval}{2}{Fetch non-backtrackable global variable}
+\predicatesummary{nb_link_dict}{3}{Non-backtrackable assignment to dict}
+\predicatesummary{nb_linkarg}{3}{Non-backtrackable assignment to term}
+\predicatesummary{nb_linkval}{2}{Assign non-backtrackable global variable}
+\predicatesummary{nb_set_to_list}{2}{Convert non-backtrackable set to list}
+\predicatesummary{nb_set_dict}{3}{Non-backtrackable assignment to dict}
+\predicatesummary{nb_setarg}{3}{Non-backtrackable assignment to term}
+\predicatesummary{nb_setval}{2}{Assign non-backtrackable global variable}
+\predicatesummary{nl}{0}{Generate a newline}
 \predicatesummary{nl}{1}{Generate a newline on a stream}
 \predicatesummary{nodebug}{0}{Disable debugging}
 \predicatesummary{nodebug}{1}{Disable debug-topic}
@@ -466,30 +473,32 @@ variable} \predicatesummary{nl}{0}{Generate a newline}
 \predicatesummary{normalize_space}{2}{Normalize white space}
 \predicatesummary{nospy}{1}{Remove spy point}
 \predicatesummary{nospyall}{0}{Remove all spy points}
-\oppredsummary{not}{1}{fy}{900}{Negation by failure (argument not
-provable). Same as \predref{\+}{1}} \predicatesummary{notrace}{0}{Stop
-tracing} \predicatesummary{notrace}{1}{Do not debug argument goal}
+\oppredsummary{not}{1}{fy}{900}{Negation by failure (argument not provable). Same as \predref{\+}{1}}
+\predicatesummary{not_exists}{1}{Tabled negation for non-ground or non-tabled goals}
+\predicatesummary{notrace}{0}{Stop tracing}
+\predicatesummary{notrace}{1}{Do not debug argument goal}
 \predicatesummary{nth_clause}{3}{N-th clause of a predicate}
-\predicatesummary{nth_integer_root_and_remainder}{4}{Integer root and
-remainder} \predicatesummary{number}{1}{Type check for integer or float}
-\predicatesummary{number_chars}{2}{Convert between number and one-char
-atoms} \predicatesummary{number_codes}{2}{Convert between number and
-character codes} \predicatesummary{number_string}{2}{Convert between
-number and string} \predicatesummary{numbervars}{3}{Number unbound
-variables of a term} \predicatesummary{numbervars}{4}{Number unbound
-variables of a term} \predicatesummary{on_signal}{3}{Handle a software
-signal} \predicatesummary{once}{1}{Call a goal deterministically}
+\predicatesummary{nth_integer_root_and_remainder}{4}{Integer root and remainder}
+\predicatesummary{number}{1}{Type check for integer or float}
+\predicatesummary{number_chars}{2}{Convert between number and one-char atoms}
+\predicatesummary{number_codes}{2}{Convert between number and character codes}
+\predicatesummary{number_string}{2}{Convert between number and string}
+\predicatesummary{numbervars}{3}{Number unbound variables of a term}
+\predicatesummary{numbervars}{4}{Number unbound variables of a term}
+\predicatesummary{on_signal}{3}{Handle a software signal}
+\predicatesummary{once}{1}{Call a goal deterministically}
 \predicatesummary{op}{3}{Declare an operator}
 \predicatesummary{open}{3}{Open a file (creating a stream)}
 \predicatesummary{open}{4}{Open a file (creating a stream)}
 \predicatesummary{open_dde_conversation}{3}{Win32: Open DDE channel}
 \predicatesummary{open_null_stream}{1}{Open a stream to discard output}
 \predicatesummary{open_resource}{3}{Open a program resource as a stream}
-\predicatesummary{open_shared_object}{2}{UNIX: Open shared library (.so
-file)} \predicatesummary{open_shared_object}{3}{UNIX: Open shared
-library (.so file)} \predicatesummary{open_string}{2}{Open a string as a
-stream} \predicatesummary{ord_list_to_assoc}{2}{Convert ordered list to
-assoc} \predicatesummary{parse_time}{2}{Parse text to a time-stamp}
+\predicatesummary{open_shared_object}{2}{UNIX: Open shared library (.so file)}
+\predicatesummary{open_shared_object}{3}{UNIX: Open shared library (.so file)}
+\predicatesummary{open_source_hook}{3}{\hook{prolog} Open a source file}
+\predicatesummary{open_string}{2}{Open a string as a stream}
+\predicatesummary{ord_list_to_assoc}{2}{Convert ordered list to assoc}
+\predicatesummary{parse_time}{2}{Parse text to a time-stamp}
 \predicatesummary{parse_time}{3}{Parse text to a time-stamp}
 \predicatesummary{pce_dispatch}{1}{Run XPCE GUI in separate thread}
 \predicatesummary{pce_call}{1}{Run goal in XPCE GUI thread}
@@ -569,11 +578,12 @@ variable} \predicatesummary{put_byte}{1}{Write a byte}
 \predicatesummary{qcompile}{2}{Compile source to Quick Load File}
 \predicatesummary{qsave_program}{1}{Create runtime application}
 \predicatesummary{qsave_program}{2}{Create runtime application}
-\predicatesummary{quasi_quotation_syntax}{1}{Declare quasi quotation
-syntax} \predicatesummary{quasi_quotation_syntax_error}{1}{Raise syntax
-error} \predicatesummary{random_property}{1}{Query properties of random
-generation} \predicatesummary{rational}{1}{Type check for a rational
-number} \predicatesummary{rational}{3}{Decompose a rational}
+\predicatesummary{quasi_quotation_syntax}{1}{Declare quasi quotation syntax}
+\predicatesummary{quasi_quotation_syntax_error}{1}{Raise syntax error}
+\predicatesummary{radial_restraint}{0}{Tabbling radial restraint was violated}
+\predicatesummary{random_property}{1}{Query properties of random generation}
+\predicatesummary{rational}{1}{Type check for a rational number}
+\predicatesummary{rational}{3}{Decompose a rational}
 \predicatesummary{read}{1}{Read Prolog term}
 \predicatesummary{read}{2}{Read Prolog term from stream}
 \predicatesummary{read_clause}{3}{Read clause from stream}
@@ -621,6 +631,7 @@ a dict} \predicatesummary{set_end_of_stream}{1}{Set physical end of an
 open file} \predicatesummary{set_flag}{2}{Set value of a flag}
 \predicatesummary{set_input}{1}{Set current input stream from a stream}
 \predicatesummary{set_locale}{1}{Set the default local}
+\predicatesummary{set_malloc}{1}{Set memory allocator property}
 \predicatesummary{set_module}{1}{Set properties of a module}
 \predicatesummary{set_output}{1}{Set current output stream from a
 stream} \predicatesummary{set_prolog_IO}{3}{Prepare streams for
@@ -640,27 +651,28 @@ goal} \predicatesummary{shell}{1}{Execute OS command}
 \predicatesummary{shell}{2}{Execute OS command}
 \predicatesummary{shift}{1}{Shift control to the closest reset/3}
 \predicatesummary{show_profile}{1}{Show results of the profiler}
+\predicatesummary{size_abstract_term}{3}{Abstract a term (tabling support)}
 \predicatesummary{size_file}{2}{Get size of a file in characters}
-\predicatesummary{size_nb_set}{2}{Determine size of non-backtrackable
-set} \predicatesummary{skip}{1}{Skip to character in current input}
+\predicatesummary{size_nb_set}{2}{Determine size of non-backtrackable set}
+\predicatesummary{skip}{1}{Skip to character in current input}
 \predicatesummary{skip}{2}{Skip to character on stream}
 \predicatesummary{sleep}{1}{Suspend execution for specified time}
 \predicatesummary{sort}{2}{Sort elements in a list}
 \predicatesummary{sort}{4}{Sort elements in a list}
-\predicatesummary{source_exports}{2}{Check whether source exports a
-predicate} \predicatesummary{source_file}{1}{Examine currently loaded
-source files} \predicatesummary{source_file}{2}{Obtain source file of
-predicate} \predicatesummary{source_file_property}{2}{Information about
-loaded files} \predicatesummary{source_location}{2}{Location of last
-read term} \predicatesummary{split_string}{4}{Break a string into
-substrings} \predicatesummary{spy}{1}{Force tracer on specified
-predicate} \predicatesummary{stamp_date_time}{3}{Convert time-stamp to
-date structure} \predicatesummary{statistics}{0}{Show execution
-statistics} \predicatesummary{statistics}{2}{Obtain collected
-statistics} \predicatesummary{stream_pair}{3}{Create/examine a
-bi-directional stream} \predicatesummary{stream_position_data}{3}{Access
-fields from stream position} \predicatesummary{stream_property}{2}{Get
-stream properties} \predicatesummary{string}{1}{Type check for string}
+\predicatesummary{source_exports}{2}{Check whether source exports a predicate}
+\predicatesummary{source_file}{1}{Examine currently loaded source files}
+\predicatesummary{source_file}{2}{Obtain source file of predicate}
+\predicatesummary{source_file_property}{2}{Information about loaded files}
+\predicatesummary{source_location}{2}{Location of last read term}
+\predicatesummary{split_string}{4}{Break a string into substrings}
+\predicatesummary{spy}{1}{Force tracer on specified predicate}
+\predicatesummary{stamp_date_time}{3}{Convert time-stamp to date structure}
+\predicatesummary{statistics}{0}{Show execution statistics}
+\predicatesummary{statistics}{2}{Obtain collected statistics}
+\predicatesummary{stream_pair}{3}{Create/examine a bi-directional stream}
+\predicatesummary{stream_position_data}{3}{Access fields from stream position}
+\predicatesummary{stream_property}{2}{Get stream properties}
+\predicatesummary{string}{1}{Type check for string}
 \predicatesummary{string_concat}{3}{atom_concat/3 for strings}
 \predicatesummary{string_length}{2}{Determine length of a string}
 \predicatesummary{string_chars}{2}{Conversion between string and list of
@@ -682,49 +694,50 @@ match} \predicatesummary{sub_string}{5}{Take a substring from a string}
 \predicatesummary{tab}{1}{Output number of spaces}
 \predicatesummary{tab}{2}{Output number of spaces on a stream}
 \predicatesummary{table}{1}{Declare predicate to be tabled}
+\predicatesummary{tabled_call}{1}{Helper for not_exists/1}
 \predicatesummary{tdebug}{0}{Switch all threads into debug mode}
 \predicatesummary{tdebug}{1}{Switch a thread into debug mode}
 \predicatesummary{tell}{1}{Change current output stream}
 \predicatesummary{telling}{1}{Query current output stream}
-\predicatesummary{term_expansion}{2}{\hook{user} Convert term before
-compilation} \predicatesummary{term_expansion}{4}{\hook{user} Convert
-term before compilation} \predicatesummary{term_singletons}{2}{Find
-singleton variables in a term}
+\predicatesummary{term_expansion}{2}{\hook{user} Convert term before compilation}
+\predicatesummary{term_expansion}{4}{\hook{user} Convert term before compilation}
+\predicatesummary{term_singletons}{2}{Find singleton variables in a term}
 \predicatesummary{term_string}{2}{Read/write a term from/to a string}
 \predicatesummary{term_string}{3}{Read/write a term from/to a string}
-\predicatesummary{term_subsumer}{3}{Most specific generalization of two
-terms} \predicatesummary{term_to_atom}{2}{Convert between term and atom}
-\predicatesummary{thread_affinity}{3}{Query and control the
-\jargon{affinity} mask} \predicatesummary{thread_at_exit}{1}{Register
-goal to be called at exit} \predicatesummary{thread_create}{2}{Create a
-new Prolog task} \predicatesummary{thread_create}{3}{Create a new Prolog
-task} \predicatesummary{thread_detach}{1}{Make thread cleanup after
-completion} \predicatesummary{thread_exit}{1}{Terminate Prolog task with
-value} \predicatesummary{thread_get_message}{1}{Wait for message}
+\predicatesummary{term_subsumer}{3}{Most specific generalization of two terms}
+\predicatesummary{term_to_atom}{2}{Convert between term and atom}
+\predicatesummary{thread_affinity}{3}{Query and control the \jargon{affinity} mask}
+\predicatesummary{thread_alias}{1}{Set the alias name of a thread}
+\predicatesummary{thread_at_exit}{1}{Register goal to be called at exit}
+\predicatesummary{thread_create}{2}{Create a new Prolog task}
+\predicatesummary{thread_create}{3}{Create a new Prolog task}
+\predicatesummary{thread_detach}{1}{Make thread cleanup after completion}
+\predicatesummary{thread_exit}{1}{Terminate Prolog task with value}
+\predicatesummary{thread_get_message}{1}{Wait for message}
 \predicatesummary{thread_get_message}{2}{Wait for message in a queue}
 \predicatesummary{thread_get_message}{3}{Wait for message in a queue}
-\predicatesummary{thread_initialization}{1}{Run action at start of
-thread} \predicatesummary{thread_join}{1}{Wait for Prolog
-task-completion} \predicatesummary{thread_join}{2}{Wait for Prolog
-task-completion} \predicatesummary{thread_local}{1}{Declare
-thread-specific clauses for a predicate}
+\predicatesummary{thread_idle}{2}{Reduce footprint while waiting}
+\predicatesummary{thread_initialization}{1}{Run action at start of thread}
+\predicatesummary{thread_join}{1}{Wait for Prolog task-completion}
+\predicatesummary{thread_join}{2}{Wait for Prolog task-completion}
+\predicatesummary{thread_local}{1}{Declare thread-specific clauses for a predicate}
 \predicatesummary{thread_message_hook}{3}{Thread local message_hook/3}
 \predicatesummary{thread_peek_message}{1}{Test for message}
 \predicatesummary{thread_peek_message}{2}{Test for message in a queue}
 \predicatesummary{thread_property}{2}{Examine Prolog threads}
 \predicatesummary{thread_self}{1}{Get identifier of current thread}
-\predicatesummary{thread_send_message}{2}{Send message to another
-thread} \predicatesummary{thread_send_message}{3}{Send message to
-another thread} \predicatesummary{thread_setconcurrency}{2}{Number of
-active threads} \predicatesummary{thread_signal}{2}{Execute goal in
-another thread} \predicatesummary{thread_statistics}{3}{Get statistics
-of another thread} \predicatesummary{threads}{0}{List running threads}
+\predicatesummary{thread_send_message}{2}{Send message to another thread}
+\predicatesummary{thread_send_message}{3}{Send message to another thread}
+\predicatesummary{thread_setconcurrency}{2}{Number of active threads}
+\predicatesummary{thread_signal}{2}{Execute goal in another thread}
+\predicatesummary{thread_statistics}{3}{Get statistics of another thread}
+\predicatesummary{threads}{0}{List running threads}
 \predicatesummary{throw}{1}{Raise an exception (see catch/3)}
 \predicatesummary{time}{1}{Determine time needed to execute goal}
 \predicatesummary{time_file}{2}{Get last modification time of file}
 \predicatesummary{tmp_file}{2}{Create a temporary filename}
-\predicatesummary{tmp_file_stream}{3}{Create a temporary file and open
-it} \predicatesummary{tnodebug}{0}{Switch off debug mode in all threads}
+\predicatesummary{tmp_file_stream}{3}{Create a temporary file and open it}
+\predicatesummary{tnodebug}{0}{Switch off debug mode in all threads}
 \predicatesummary{tnodebug}{1}{Switch off debug mode in a thread}
 \predicatesummary{tnot}{1}{Tabled negation}
 \predicatesummary{told}{0}{Close current output}
@@ -747,6 +760,7 @@ it} \predicatesummary{tnodebug}{0}{Switch off debug mode in all threads}
 \predicatesummary{trie_update}{3}{Update associated value in trie}
 \predicatesummary{trie_term}{2}{Get term from a trie by handle}
 \predicatesummary{trim_stacks}{0}{Release unused memory resources}
+\predicatesummary{tripwire}{2}{\hook{prolog} Handle a tabling tripwire event}
 \predicatesummary{true}{0}{Succeed} \predicatesummary{tspy}{1}{Set spy
 point and enable debugging in all threads}
 \predicatesummary{tspy}{2}{Set spy point and enable debugging in a
@@ -792,11 +806,10 @@ spawn Windows task} \predicatesummary{win_has_menu}{0}{Win32: true if
 console menu is available} \predicatesummary{win_folder}{2}{Win32: get
 special folder by CSIDL}
 \predicatesummary{win_insert_menu}{2}{swipl-win.exe: add menu}
-\predicatesummary{win_insert_menu_item}{4}{swipl-win.exe: add item to
-menu} \predicatesummary{win_shell}{2}{Win32: open document through
-Shell} \predicatesummary{win_shell}{3}{Win32: open document through
-Shell} \predicatesummary{win_registry_get_value}{3}{Win32: get registry
-value}
+\predicatesummary{win_insert_menu_item}{4}{swipl-win.exe: add item to menu}
+\predicatesummary{win_shell}{2}{Win32: open document through Shell}
+\predicatesummary{win_shell}{3}{Win32: open document through Shell}
+\predicatesummary{win_registry_get_value}{3}{Win32: get registry value}
 \predicatesummary{win_window_color}{2}{Win32: change colors of console window}
 \predicatesummary{win_window_pos}{1}{Win32: change size and position of window}
 \predicatesummary{window_title}{2}{Win32: change title of window}
@@ -808,12 +821,11 @@ value}
 \predicatesummary{write}{1}{Write term}
 \predicatesummary{write}{2}{Write term to stream}
 \predicatesummary{writeln}{1}{Write term, followed by a newline}
-\predicatesummary{writeln}{2}{Write term, followed by a newline to a
-stream} \predicatesummary{write_canonical}{1}{Write a term with quotes,
-ignore operators} \predicatesummary{write_canonical}{2}{Write a term
-with quotes, ignore operators on a stream}
-\predicatesummary{write_length}{3}{Dermine \#characters to output a
-term} \predicatesummary{write_term}{2}{Write term with options}
+\predicatesummary{writeln}{2}{Write term, followed by a newline to a stream}
+\predicatesummary{write_canonical}{1}{Write a term with quotes, ignore operators}
+\predicatesummary{write_canonical}{2}{Write a term with quotes, ignore operators on a stream}
+\predicatesummary{write_length}{3}{Dermine \#characters to output a term}
+\predicatesummary{write_term}{2}{Write term with options}
 \predicatesummary{write_term}{3}{Write term with options to stream}
 \predicatesummary{writef}{1}{Formatted write}
 \predicatesummary{writef}{2}{Formatted write on stream}
@@ -857,6 +869,7 @@ term} \predicatesummary{write_term}{2}{Write term with options}
 \functionsummary{cosh}{1}{Hyperbolic cosine}
 \functionsummary{copysign}{2}{Apply sign of N2 to N1}
 \functionsummary{cputime}{0}{Get CPU time}
+\functionsummary{denominator}{1}{Denominator of a rational number (N/D)}
 \functionsummary{div}{2}{Integer division}
 \functionsummary{e}{0}{Mathematical constant}
 \functionsummary{erf}{1}{Gauss error function}
@@ -875,12 +888,15 @@ term} \predicatesummary{write_term}{2}{Write term with options}
 \functionsummary{lgamma}{1}{Log of gamma function}
 \functionsummary{log}{1}{Natural logarithm}
 \functionsummary{log10}{1}{10 base logarithm}
+\functionsummary{lcm}{2}{Least Common Multiple}
 \functionsummary{lsb}{1}{Least significant bit}
 \functionsummary{max}{2}{Maximum of two numbers}
 \functionsummary{min}{2}{Minimum of two numbers}
 \functionsummary{msb}{1}{Most significant bit}
 \opfuncsummary{mod}{2}{xfx}{300}{Remainder of division}
 \functionsummary{nan}{0}{Not a Number (NaN)}
+\functionsummary{nexttoward}{2}{Next float in some direction}
+\functionsummary{numerator}{1}{Numerator of a rational number (N/D)}
 \functionsummary{powm}{3}{Integer exponent and modulo}
 \functionsummary{random}{1}{Generate random number}
 \functionsummary{random_float}{0}{Generate random number}
@@ -889,6 +905,7 @@ term} \predicatesummary{write_term}{2}{Write term with options}
 \functionsummary{rdiv}{2}{Ration number division}
 \functionsummary{rem}{2}{Remainder of division}
 \functionsummary{round}{1}{Round to nearest integer}
+\functionsummary{roundtoward}{2}{Float arithmetic with specified rounding}
 \functionsummary{truncate}{1}{Truncate float to integer}
 \functionsummary{pi}{0}{Mathematical constant}
 \functionsummary{popcount}{1}{Count 1s in a bitvector}

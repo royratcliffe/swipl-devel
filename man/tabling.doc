@@ -70,7 +70,6 @@ tabling directive and otherwise not changing the algorithm. The code
 becomes:
 
 \begin{code}
-:- use_module(library(tabling)).
 :- table fib/2.
 
 fib(0, 1) :- !.
@@ -134,7 +133,6 @@ between two cities, we cannot use the most natural logical definition to
 express that we can travel between two cities:
 
 \begin{code}
-% :- use_module(library(tabling)).
 % :- table connection/2.
 
 connection(X, Y) :-
@@ -216,7 +214,6 @@ Prolog.} This causes the tabling engine each time that it finds an new
 path to call \nopredref{shortest}{3} and keep the shortest route.
 
 \begin{code}
-:- use_module(library(tabling)).
 :- table
     connection(_,_,lattice(shortest/3)).
 
@@ -246,6 +243,7 @@ indicates the portability.
     \termitem{Var}{}
 \nodescription
     \termitem{+}{}
+\nodescription
     \termitem{index}{}
 A variable (XSB), the atom \const{index} (YAP) or a \const{+}
 (B-Prolog, YAP) declare that the argument is tabled normally.
@@ -380,8 +378,12 @@ p(1).
 % 170,005 inferences, 0.016 CPU in 0.016 seconds
 \end{code}
 
-This may make you wonder why subsumptive tabling is not the default.
-There are also some drawbacks:
+\jargon{Subsumptive} tabling can be activated in two ways. Per table
+assign the \exam{... as subsumptive} option and globally by setting the
+\prologflag{table_subsumptive} flag to \const{true}.
+
+One may wonder why subsumptive tabling is not the default. There are
+also some drawbacks:
 
 \begin{itemize}
     \item Subsumptive tabling only provides correct support if
@@ -397,10 +399,6 @@ in the call graph which can slow down the table completion
 process.  Larger dependent components also negatively impact the
 issues discussed in \secref{tnotpure}.
 \end{itemize}
-
-In the current implementation, SWI-Prolog only uses the more general
-table if this table is \jargon{completed}.  This is likely to change
-in future versions.
 
 
 \section{Well Founded Semantics}
@@ -714,7 +712,7 @@ converting the abolished shared table to a private table.}.
 The current implementation never reclaims shared tables.  Instead, they
 remain part of the global variant table and only the answers of the
 shared table are reclaimed. Future versions may garbage collect such
-tables.
+tables.  See also abolish_shared_tables/0
 
 
 \subsection{Status and future of shared tabling}
@@ -742,6 +740,209 @@ SWI-Prolog's \jargon{continuation based} tabling offers the opportunity
 to perform \jargon{completion} using multiple threads.
 
 
+\section{Tabling restraints: bounded rationality and tripwires}
+\label{sec:tabling-restraints}
+
+Tabling avoids non-termination due to \jargon{self-recursion}. As Prolog
+allows for infinitely nested \jargon{compound terms} (\jargon{function
+symbols} in logic) and arbitrary numbers, the set of possible answers is
+not finite and thus there is no guaranteed termination.
+
+This section describes \jargon{restraints}
+\cite{DBLP:conf/aaai/GrosofS13} that can be enforced to specific or all
+tabled predicates. Currently there are three defined restraints,
+limiting (1) the size of (the arguments to) goals, (2) the size of the
+answer substitution added to a table and (3) the number of answers
+allowed in any table. If any of these events occurs we can specify the
+action taken. We distinguish two classes of actions. First, these events
+can trap a \jargon{tripwire} which can be handled using a hook or a
+predefined action such as raising an exception, printing a warning or
+enter a \jargon{break level}. This can be used for limiting resources,
+be notified of suspicious events (debugging) or dynamically adjust the
+(tabling) strategy of the program. Second, they may continue the
+computation that results in a partial answer (\jargon{bounded
+rationality}). Unlike just not exploring part of the space though, we
+use the third thruth value of well founded semantics to keep track of
+answers that have not been affected by the restraints and those that
+have been affected.
+
+The tripwire actions apply for all restraints.  If a tripwire action is
+triggered, the system takes the steps below.
+
+\begin{enumerate}
+    \item Call the prolog:tripwire/2 hook.
+    \item If prolog:tripwire/2 fails, take one of the predefined
+    actions:
+    \begin{description}
+	\termitem{warning}{}
+	Print a message indicating the trapped tripwire and continue
+	execution as normal, i.e., the final answer is the same as
+	if no restraint was active.
+	\termitem{error}{}
+	Throw an exception
+	\verb$error(resource_error(tripwire(Wire,Context)))$.
+	\termitem{suspend}{}
+	Print a message and start a \jargon{break level} (see break/0).
+    \end{description}
+\end{enumerate}
+
+
+\begin{description}
+    \predicate[multifile]{prolog:tripwire}{2}{Wire, Context}
+Called when tripwire \arg{Wire} is trapped. \arg{Context} provides
+additional context for interpreting the tripwire.  The hook can take
+one of three actions:
+
+\begin{itemize}
+    \item Succeed.  In this case the tripwire is considered handled and
+    execution proceeds as if there was no tripwire.  Note that tripwires
+    only trigger at the exact value, which implies that a wire on a
+    count will be triggered only once.  The hook can install a new
+    tripwire at a higher count.
+    \item Fail.  In this case the default action is taken.
+    \item Throw an exception.  Exceptions are propagated normally.
+\end{itemize}
+\end{description}
+
+\jargon{Radial restraints} limit the sizes of subgoals or answers.
+Abstraction of a term according to the size limit is implemented by
+size_abstract_term/3.
+
+\begin{description}
+    \predicate[det]{size_abstract_term}{3}{+Size, +Term, -Abstract}
+The size of a term is defined as the number of compound subterms
+(\jargon{function symbols}) that appear in term. \arg{Abstract} is an
+abstract copy of \arg{Term} where each argument is abstracted by
+copying only the first \arg{Size} function sumbols and constants.
+Excess function symbols are replaced by fresh variables.
+
+This predicate is a helper for tabling where \arg{Term} is the
+\functor{ret}{N} \jargon{answer skeleton} that is added to the an
+\jargon{answer table}.  Examples:
+
+\begin{center}\begin{tabular}{cll}
+\textbf{Size} & \textbf{Term} & \textbf{Abstract} \\
+\hline
+0 & ret(f(x), a)       & ret(_, a) \\
+1 & ret(f(x), a)       & ret(f(x), a) \\
+1 & ret(f(A), a)       & ret(f(A), a) \\
+1 & ret(f(x), x(y(Z))) & ret(f(x), x(_)) \\
+\end{tabular}\end{center}
+
+    \predicate[undefined]{radial_restraint}{0}{}
+This predicate is \jargon{undefined} in the sense of well founded
+semantics (see \secref{WFS} and undefined/0). Any answer that depends on
+this condition is undefined because either the restraint on the subgoal
+size or answer size was violated.
+\end{description}
+
+
+\subsection{Restraint subgoal size}
+\label{sec:tabling-restraint-subgoal}
+
+Using the \term{subgoal_abstract}{Size} attribute, a tabled subgoal that
+that is too large is \jargon{abstracted} by replacing compound subterms
+of the goal with variables. In a nutshell, a goal
+\term{p}{s(s(s(s(s(0)))))} is converted into the semantically equivalent
+subgoal if the subgoal size is limited to~3.
+
+\begin{code}
+    ...,
+    p(s(s(s(X)))), X = s(s(0)),
+    ...,
+\end{code}
+
+As a result of this, terms stored in the \jargon{variant trie} that maps
+goal variants into \jargon{answer tables} is limited. Note that does not
+limit the number of answer tables as atomic values are never abstracted
+and there are, for example, an infinite number of integers. Note that
+restraining the subgoal size does not affect the semantics, provided
+more general queries on the predicate include all answers that more
+specific queries do.  See also \jargon{call substitution} as described
+in \secref{tabling-subsumptive}.  In addition to the tripwire actions,
+the \prologflag{max_table_subgoal_size_action} can be set to the
+value \const{abstract}:
+
+\begin{description}
+    \termitem{abstract}{}
+Abstract the goal as described above and provide correctness by adding
+the required unification instructions after the goal.
+\end{description}
+
+
+\subsection{Restraint answer size}
+\label{sec:tabling-restraint-answer-size}
+
+Using the \term{answer_abstract}{Size} attribute, a tabled subgoal that
+produces answer substitutions (instances of the variables in the goal)
+whose size exceed \arg{Size} are trapped. In addition to the
+tripwire actions, answer abstraction defines two additional modes
+for dealing with too large answers as defines by the Prolog flag
+\prologflag{max_table_answer_size_action}:
+
+\begin{description}
+    \termitem{fail}{}
+Ignore the too large answer.  Note that this is semantically incorrect.
+    \termitem{bounded_rationality}{}
+In this mode, the large answer is \jargon{abstracted} in the same way as
+subgoals are abstracted (see \secref{tabling-restraint-subgoal}). This
+is semantically incorrect, but our third thruth value \jargon{undefined}
+is used to remedy this problem. In other words, the abstracted value is
+added to the table as \jargon{undefined} and all conclusions that depend
+on usage of this abstracted value are thus undefined unless they can
+also be proved some other way.
+\end{description}
+
+\subsection{Restraint answer count}
+\label{sec:tabling-restraint-answer-count}
+
+Finally, using ``as \term{max_answers}{Count}'' or the Prolog flag
+\prologflag{max_answers_for_subgoal}, the number of answers in a table
+is restrained. In addition to the tripwire actions this restraint
+supports the action \const{bounded_rationality}\footnote{The action
+\const{complete_soundly} is supported as a synonym for XSB
+compatibility}. If the restraint is reached in the bounded rationality
+mode the system takes the following actions:
+
+\begin{itemize}
+    \item Ignore the answer that triggered the restraint.
+    \item Prune the choice points of the tabled goal to avoid more
+          answers.
+    \item Add an new answer to the table that does not bind any
+          variables, i.e., an empty answer substitution.  This answer
+	  is conditional on answer_count_restraint/0.
+\end{itemize}
+
+\begin{description}
+    \predicate[undefined]{answer_count_restraint}{0}{}
+This predicate is \jargon{undefined} in the sense of well founded
+semantics (see \secref{WFS} and undefined/0). Any answer that depends on
+this condition is undefined because the \const{max_answers} restraint on
+some table was violated.
+\end{description}
+
+The program and subsequent query below illustrate the behavior.
+
+\begin{code}
+:- table p/2 as max_answers(3).
+
+p(M,N) :-
+    between(1,M,N).
+\end{code}
+
+\begin{code}
+?- p(1 000 000, X).
+X = 3 ;
+X = 2 ;
+X = 1 ;
+% WFS residual program
+    p(1000000, X) :-
+        answer_count_restraint.
+p(1000000, X).
+\end{code}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Tabling predicate reference}
 \label{sec:tabling-preds}
 
@@ -816,6 +1017,28 @@ enclosed in parenthesis. For example:
 The tnot/1 predicate implements \jargon{tabled negation}. This predicate
 realises \jargon{Well Founded Semantics}. See \secref{WFS} for details.
 
+    \predicate{not_exists}{1}{:Goal}
+Handles tabled negation for non-ground (\jargon{floundaring}) \arg{Goal}
+as well as non tabled goals. If \arg{Goal} is ground and tabled
+not_exists/1 calls tnot/1. Otherwise it used \term{tabled_call}{Goal} to
+create a table and subsequently uses tnot/1 on the created table.
+
+Logically, \term{not_exists}{p(X)} is defined as
+\mbox{tnot($\exists{}$\arg{X}(p(\arg{X})))}
+
+Note that each \arg{Goal} variant populates a table for tabled_call/1.
+Applications may need to abolish such tables to limit memory usage or
+guarantee consistency `after the world changed'.
+
+    \predicate{tabled_call}{1}{:Goal}
+Helper predicate for not_exists/1. Defined as below. The helper is
+public because application may need to abolish its tables.
+
+\begin{code}
+:- table tabled_call/1 as variant.
+tabled_call(Goal) :- call(Goal).
+\end{code}
+
     \predicate{current_table}{2}{:Variant, -Trie}
 True when \arg{Trie} is the answer table for \arg{Variant}.
 
@@ -830,9 +1053,20 @@ Remove all tables, both \jargon{private} and \jargon{shared} (see
 \secref{tabling-shared}. Since the introduction of \jargon{incremental
 tabling} (see \secref{tabling-incremental}) abolishing tables is rarely
 required to maintain consistency of the tables with a changed
-environment.  Tables may be abolished regardless of the current state
-of the table.  \jargon{Incomplete} tables are flagged for destruction
-when they are completed.  See also \secref{tabling-shared-abolish}.
+environment. Tables may be abolished regardless of the current state of
+the table. \jargon{Incomplete} tables are flagged for destruction when
+they are completed. See \secref{tabling-shared-abolish} for the
+semantics of destroying shared tables and the following predicates for
+destroying a subset of the tables: abolish_private_tables/0,
+abolish_shared_tables/0, abolish_table_subgoals/1 and
+abolish_module_tables/1.
+
+    \predicate{abolish_private_tables}{0}{}
+Abolish all tables that are private to this thread.
+
+    \predicate{abolish_shared_tables}{0}{}
+Abolish all tables that are shared between threads. See also
+\secref{tabling-shared-abolish}
 
     \predicate{abolish_table_subgoals}{1}{:Subgoal}
 Abolish all tables that unify with \arg{SubGoal}.  Tables that have

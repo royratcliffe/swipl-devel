@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2019, University of Amsterdam
+    Copyright (c)  1997-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -36,7 +36,7 @@
 
 #ifndef PL_GLOBAL_H_INCLUDED
 #define PL_GLOBAL_H_INCLUDED
-#include "pl-trie.h"
+#include "pl-allocpool.h"
 
 #ifndef GLOBAL			/* global variables */
 #define GLOBAL extern
@@ -124,8 +124,9 @@ struct PL_global_data
     char **	os_argv;
     int		appl_argc;		/* Application options */
     char **	appl_argv;
-    int		notty;			/* -tty: donot use ioctl() */
+    int		notty;			/* -tty: do not use ioctl() */
     int		optimise;		/* -O: optimised compilation */
+    int		packs;			/* --no-packs: no packs */
   } cmdline;
 
   struct
@@ -180,8 +181,8 @@ struct PL_global_data
 #if O_PLMT
   struct				/* Shared table data */
   { struct trie *variant_table;		/* Variant --> table */
-    trie_allocation_pool node_pool;	/* Node allocation pool for tries */
-    simpleMutex  mutex;			/* Sync completion */
+    alloc_pool *node_pool;		/* Node allocation pool for tries */
+    counting_mutex  mutex;		/* Sync completion */
 #ifdef __WINDOWS__
     CONDITION_VARIABLE cvar;
 #else
@@ -204,7 +205,6 @@ struct PL_global_data
   { size_t	highest;		/* Highest atom index */
     atom_array	array;
     AtomTable	table;			/* hash-table */
-    Atom	builtin_array;		/* Builtin atoms */
     int		lookups;		/* # atom lookups */
     int		cmps;			/* # string compares for lookup */
     int		initialised;		/* atoms have been initialised */
@@ -223,6 +223,8 @@ struct PL_global_data
 #endif
     atom_t     *for_code[256];		/* code --> one-char-atom */
     PL_blob_t  *types;			/* registered atom types */
+    int		text_rank;		/* next rank for text types */
+    int		nontext_rank;		/* next rank for non-text types */
   } atoms;
 
   struct
@@ -237,6 +239,7 @@ struct PL_global_data
     InitialiseHandle initialise_tail;
     PL_dispatch_hook_t dispatch_events; /* PL_dispatch_hook() */
 
+    unsigned int  signature;		/* Foreign predicate signature */
     int		  _loaded;		/* system extensions are loaded */
   } foreign;
 
@@ -285,7 +288,10 @@ struct PL_global_data
 
   struct
   { Table		tmp_files;	/* Known temporary files */
-    CanonicalDir	_canonical_dirlist;
+    struct
+    { CanonicalDir     *entries;
+      unsigned		size;
+    } dir_table;			/* Canonical OS dirs */
     char *		myhome;		/* expansion of ~ */
     char *		fred;		/* last expanded ~user */
     char *		fredshome;	/* home of fred */
@@ -347,6 +353,7 @@ struct PL_global_data
     size_t	erased;			/* # erased pending clauses */
     size_t	erased_size;		/* memory used by them */
     size_t	erased_size_last;	/* memory used by them after last CGC */
+    size_t	db_erased_refs;		/* Clause references on erased clauses */
     int		cgc_space_factor;	/* Max total/margin garbage */
     double	cgc_stack_factor;	/* Price to scan stack space */
     double	cgc_clause_factor;	/* Pce to scan clauses */
@@ -380,6 +387,8 @@ struct PL_global_data
     PL_thread_info_t   *free;		/* Free threads */
     int			highest_allocated; /* Highest with info struct */
     int			thread_max;	/* Size of threads array */
+    int			highest_id;	/* Highest Id of life thread  */
+    int			peak_id;	/* Highest Id of any thread  */
     PL_thread_info_t  **threads;	/* Pointers to thread-info */
     struct
     { pthread_mutex_t	mutex;
@@ -435,7 +444,6 @@ struct PL_local_data
 #endif
   int		in_arithmetic;		/* doing arithmetic */
   int		in_print_message;	/* Inside printMessage() */
-  int		autoload_nesting;	/* Nesting level in autoloader */
   gen_t		gen_reload;		/* reload generation */
   void *	glob_info;		/* pl-glob.c */
   IOENC		encoding;		/* default I/O encoding */
@@ -581,7 +589,14 @@ struct PL_local_data
     { gmp_randstate_t state;
       int initialised;
     } random;
+    struct
+    { size_t max_rational_size;
+      atom_t max_rational_size_action;
+    } rat;
 #endif
+    struct
+    { unsigned int flags;		/* FTL_* */
+    } f;
   } arith;
 
 #if O_CYCLIC
@@ -594,11 +609,19 @@ struct PL_local_data
   struct
   { struct tbl_component *component;    /* active component */
     struct trie *variant_table;		/* Variant --> table */
-    trie_allocation_pool node_pool;	/* Node allocation pool for tries */
+    alloc_pool *node_pool;		/* Node allocation pool for tries */
     int	has_scheduling_component;	/* A leader was created */
     int in_answer_completion;		/* Running answer completion */
     term_t delay_list;			/* Global delay list */
     term_t idg_current;			/* Current node in IDG (trie symbol) */
+    struct
+    { atom_t max_table_subgoal_size_action;
+      size_t max_table_subgoal_size;
+      atom_t max_table_answer_size_action;
+      size_t max_table_answer_size;
+      atom_t max_answers_for_subgoal_action;
+      size_t max_answers_for_subgoal;
+    } restraint;
   } tabling;
 
   struct
@@ -637,8 +660,7 @@ struct PL_local_data
     AbortHandle _abort_tail;
 
     buffer	_discardable_buffer;	/* PL_*() character buffers */
-    buffer	_buffer_ring[BUFFER_RING_SIZE];
-    int		_current_buffer_id;
+    string_stack string_buffers;	/* PL_*() string buffers */
 
     int		SP_state;		/* For SICStus interface */
   } fli;
@@ -698,6 +720,11 @@ struct PL_local_data
   { size_t	erased_skipped;		/* # erased clauses skipped */
     int64_t	cgc_inferences;		/* Inferences at last cgc consider */
   } clauses;
+
+  struct
+  { DefinitionChain nesting;		/* Nesting chain in the autoloader */
+    Definition	loop;			/* We are looping on this def */
+  } autoload;
 
   struct
   { intptr_t _total_marked;		/* # marked global cells */

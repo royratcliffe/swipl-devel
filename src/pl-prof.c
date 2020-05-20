@@ -36,6 +36,7 @@
 
 /*#define O_DEBUG 1*/
 #include "pl-incl.h"
+#include "pl-comp.h"
 #include "pl-prof.h"
 
 #undef LD
@@ -77,7 +78,7 @@ typedef struct call_node
 } call_node;
 
 static void	freeProfileData(void);
-static void	collectSiblingsTime(void);
+static void	collectSiblingsTime(ARG1_LD);
 
 int
 activateProfiler(prof_status active ARG_LD)
@@ -374,8 +375,8 @@ Prolog query API:
 $prof_sibling_of(?Child, ?Parent)
 	Generate hierachy.  If Parent is '-', generate the roots
 
-$prof_node(+Node, -Pred, -Calls, -Redos, -Exits, -TickFraction)
-
+$prof_node(+Node, -Pred, -Calls, -Redos, -Exits,
+	   -Recursive, -Ticks, -SiblingTicks)
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
@@ -456,7 +457,7 @@ PRED_IMPL("$prof_sibling_of", 2, prof_sibling_of, PL_FA_NONDETERMINISTIC)
 
 static int
 identify_def(term_t t, void *handle)
-{ return unify_definition(MODULE_user, t, handle, 0, GP_QUALIFY);
+{ return unify_definition(MODULE_user, t, handle, 0, GP_QUALIFY|GP_NAMEARITY);
 }
 
 
@@ -473,22 +474,22 @@ unify_node_id(term_t t, call_node *n)
 
 
 static
-PRED_IMPL("$prof_node", 7, prof_node, 0)
+PRED_IMPL("$prof_node", 8, prof_node, 0)
 { PRED_LD
   call_node *n = NULL;
 
   if ( !get_node(A1, &n PASS_LD) )
-    fail;
+    return FALSE;
 
-  if ( unify_node_id(A2, n) &&
-       PL_unify_integer(A3, n->calls) &&
-       PL_unify_integer(A4, n->redos) &&
-       PL_unify_integer(A5, n->exits) &&
-       PL_unify_integer(A6, n->recur) &&
-       PL_unify_integer(A7, n->ticks) )
-    succeed;
+  collectSiblingsTime(PASS_LD1);
 
-  fail;
+  return ( unify_node_id(A2, n) &&
+	   PL_unify_integer(A3, n->calls) &&
+	   PL_unify_integer(A4, n->redos) &&
+	   PL_unify_integer(A5, n->exits) &&
+	   PL_unify_integer(A6, n->recur) &&
+	   PL_unify_integer(A7, n->ticks) &&
+	   PL_unify_integer(A8, n->sibling_ticks) );
 }
 
 
@@ -497,10 +498,12 @@ PRED_IMPL("$prof_node", 7, prof_node, 0)
 		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-prof_procedure_data(+Head,
+prof_procedure_data(+PredicateIndicator,
 		    -TimeSelf, -TimeSiblings, -Parents, -Siblings)
-    Where Parents  = list_of(reference(Head, Calls, Redos))
-      And Siblings = list_of(reference(Head, Calls, Redos))
+    Where Parents  = list_of(Relative)
+      And Siblings = list_of(Relative)
+      and Relative = node(Pred, CycleID, Ticks, SiblingTicks,
+			  Calls, Redos, Exits)
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 typedef struct prof_ref
@@ -713,7 +716,7 @@ static int
 get_def(term_t t, void **handle)
 { Procedure proc;
 
-  if ( get_procedure(t, &proc, 0, GP_FIND) )
+  if ( get_procedure(t, &proc, 0, GP_FIND|GP_NAMEARITY) )
   { *handle = proc->definition;
     succeed;
   }
@@ -743,7 +746,7 @@ get_handle(term_t t, void **handle)
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-$prof_procedure_data(+Procedure,
+$prof_procedure_data(+PredicateIndicator,
 		     -Ticks, -TicksSiblings,
 		     -Calls, -Redos, -Exits,
 		     -Callers, -Callees)
@@ -762,7 +765,7 @@ PRED_IMPL("$prof_procedure_data", 8, prof_procedure_data, PL_FA_TRANSPARENT)
   if ( !get_handle(A1, &handle) )
     fail;
 
-  collectSiblingsTime();
+  collectSiblingsTime(PASS_LD1);
   memset(&sum, 0, sizeof(sum));
   for(n=LD->profile.roots; n; n=n->next)
     count += sumProfile(n, handle, &prof_default_type, &sum, 0 PASS_LD);
@@ -813,10 +816,69 @@ PRED_IMPL("$prof_statistics", 5, prof_statistics, 0)
 		 *	       RESET		*
 		 *******************************/
 
+static QueryFrame
+prof_clear_environments(PL_local_data_t *ld, LocalFrame fr)
+{ if ( fr == NULL )
+    return NULL;
+
+  for(;;)
+  { if ( true(fr, FR_MARKED) )
+      return NULL;
+    set(fr, FR_MARKED);
+    ld->gc._local_frames++;
+
+    fr->prof_node = NULL;
+
+    if ( fr->parent )
+      fr = fr->parent;
+    else				/* Prolog --> C --> Prolog calls */
+      return queryOfFrame(fr);
+  }
+}
+
+
+static void
+prof_clear_choicepoints(PL_local_data_t *ld, Choice ch)
+{ for( ; ch; ch = ch->parent )
+  { ld->gc._choice_count++;
+    prof_clear_environments(ld, ch->frame);
+  }
+}
+
+
+static void
+prof_clear_stacks(PL_local_data_t *ld, LocalFrame fr, Choice ch)
+{ QueryFrame qf;
+
+  while(fr)
+  { qf = prof_clear_environments(ld, fr);
+    assert(qf->magic == QID_MAGIC);
+    prof_clear_choicepoints(ld, ch);
+    if ( qf->parent )
+    { QueryFrame pqf = qf->parent;
+
+      if ( !(fr = pqf->registers.fr) )
+	fr = qf->saved_environment;
+      ch = qf->saved_bfr;
+    } else
+      break;
+  }
+}
+
+
 bool
 resetProfiler(void)
 { GET_LD
   stopProfiler();
+
+  assert(LD->gc._local_frames == 0);
+  assert(LD->gc._choice_count == 0);
+
+  prof_clear_stacks(LD, environment_frame, LD->choicepoints);
+  unmark_stacks(LD, environment_frame, LD->choicepoints, FR_MARKED);
+
+  assert(LD->gc._local_frames == 0);
+  assert(LD->gc._choice_count == 0);
 
   freeProfileData();
   LD->profile.samples          = 0;
@@ -859,16 +921,16 @@ PRED_IMPL("$profile", 2, profile, PL_FA_TRANSPARENT)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-This function is responsible for collection the profiling statistics  at
-run time.  It is called by the UNIX interval timer on each clock tick of
-the  machine  (every  20  milli seconds).  If profiling is plain we just
-increment the profiling tick of the procedure on top of the stack.   For
-cumulative  profiling  we  have  to  scan the entire local stack.  As we
-don't want to increment each invokation of recursive  functions  on  the
-stack  we  maintain a flag on each function.  This flag is set the first
-time the function is found on the stack.  If is is found set the profile
-counter will not be incremented.  We do a second pass over the frames to
-clear the flags again.
+This function is responsible for collection  the profiling statistics at
+run time. It is called from a  dedicated profiler thread that by default
+triggers this function every 5ms.  First, this calls thread_prof_ticks()
+to determine the number of  ms  the   relevant  clock  (CPU or wall) has
+progressed and then calls this function with `count` set to the relevant
+clock increment, i.e., count is a number in the range 0..5.
+
+This function just ticks the leaf node   in  the dynamic call graph. The
+function collectSiblingsTime() propagates these   upward when collecting
+statistics.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static void
@@ -894,7 +956,23 @@ profile(intptr_t count, PL_local_data_t *__PL_ld)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 profCall(Definition handle)
-    Make a call from the current node to handle.
+
+A call was made from the  current  node   to  handle.  This  builds up a
+dynamic call tree. THe tree is constructed as follows:
+
+  - If there is no current node
+    - If the root-set contains a node for `handle`, use it
+    - Else create a new root node.
+  - If the current node has the same handle, increment `node->recur`
+  - If somewhere in the parent chain we find the same parent-child
+    transition, we tick this node and return it.  For example, given
+    p->q->r->p, a call to q returns the q parent node and increments
+    it recursion count.
+    JW: This seems wrong
+	- It breaks the propagation of self-ticks in the tree.
+	- I think the second `p` also creates a second cycle.
+  - If the current node has a sibling with `handle`, return it.
+  - Else, add a new sibling.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #ifdef O_DEBUG
@@ -954,7 +1032,7 @@ prof_call(void *handle, PL_prof_type_t *type ARG_LD)
 	  Sdprintf("Call: direct recursion on %s\n", node_name(node)));
     LD->profile.accounting = FALSE;
     return node;
-  } else				/* from same parent */
+  } else				/* from some parent */
   { void *parent = node->handle;
 
     for(node=node->parent; node; node = node->parent)
@@ -1144,10 +1222,8 @@ collectSiblingsNode(call_node *n)
 
 
 static void
-collectSiblingsTime(void)
-{ GET_LD
-
-  if ( !LD->profile.sum_ok )
+collectSiblingsTime(ARG1_LD)
+{ if ( !LD->profile.sum_ok )
   { call_node *n;
 
     for(n=LD->profile.roots; n; n=n->next)
@@ -1215,8 +1291,8 @@ PRED_IMPL("reset_profiler", 0, reset_profiler, 0)
 }
 
 static
-PRED_IMPL("$prof_node", 7, prof_node, 0)
-{ return notImplemented("profile_node", 7);
+PRED_IMPL("$prof_node", 8, prof_node, 0)
+{ return notImplemented("profile_node", 8);
 }
 
 static
@@ -1231,7 +1307,7 @@ PRED_IMPL("$profile", 2, profile, PL_FA_TRANSPARENT)
 
 static
 PRED_IMPL("$prof_procedure_data", 8, prof_procedure_data, PL_FA_TRANSPARENT)
-{ return notImplemented("$prof_procedure_data", 7);
+{ return notImplemented("$prof_procedure_data", 8);
 }
 
 static
@@ -1283,7 +1359,7 @@ BeginPredDefs(profile)
   PRED_DEF("$profile", 2, profile, PL_FA_TRANSPARENT)
   PRED_DEF("profiler", 2, profiler, 0)
   PRED_DEF("reset_profiler", 0, reset_profiler, 0)
-  PRED_DEF("$prof_node", 7, prof_node, 0)
+  PRED_DEF("$prof_node", 8, prof_node, 0)
   PRED_DEF("$prof_sibling_of", 2, prof_sibling_of, PL_FA_NONDETERMINISTIC)
   PRED_DEF("$prof_procedure_data", 8, prof_procedure_data, PL_FA_TRANSPARENT)
   PRED_DEF("$prof_statistics", 5, prof_statistics, 0)

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2008-2019, University of Amsterdam
+    Copyright (c)  2008-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -491,6 +491,10 @@ VMI(H_MPZ, 0, VM_DYNARGC, (CA1_MPZ))
   VMI_GOTO(H_STRING);
 }
 
+VMI(H_MPQ, 0, VM_DYNARGC, (CA1_MPQ))
+{ SEPERATE_VMI;
+  VMI_GOTO(H_STRING);
+}
 
 VMI(H_STRING, 0, VM_DYNARGC, (CA1_STRING))
 { Word k;
@@ -893,6 +897,11 @@ H_STRING.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(B_MPZ, 0, VM_DYNARGC, (CA1_MPZ))
+{ SEPERATE_VMI;
+  VMI_GOTO(B_STRING);
+}
+
+VMI(B_MPQ, 0, VM_DYNARGC, (CA1_MPQ))
 { SEPERATE_VMI;
   VMI_GOTO(B_STRING);
 }
@@ -1780,7 +1789,11 @@ VMI(I_EXIT, VIF_BREAK, 0, ())
 { LocalFrame leave;
 
   if ( unlikely(LD->alerted) )
-  {
+  { if ( (LD->alerted&ALERT_BUFFER) )
+    { LD->alerted &= ~ALERT_BUFFER;
+      release_string_buffers_from_frame(FR PASS_LD);
+    }
+
 #if O_DEBUGGER
     if ( debugstatus.debugging )
     { int action;
@@ -2552,6 +2565,10 @@ VMI(I_INTEGER, VIF_BREAK, 1, (CA1_VAR))
 { TYPE_TEST(FUNCTOR_integer1, isInteger);
 }
 
+VMI(I_RATIONAL, VIF_BREAK, 1, (CA1_VAR))
+{ TYPE_TEST(FUNCTOR_rational1, isRational);
+}
+
 VMI(I_FLOAT, VIF_BREAK, 1, (CA1_VAR))
 { TYPE_TEST(FUNCTOR_float1, isFloat);
 }
@@ -2753,6 +2770,7 @@ code.
 VMI(S_DYNAMIC, 0, 0, ())
 { enterDefinition(DEF);
 
+  SEPERATE_VMI;
   VMI_GOTO(S_STATIC);
 }
 
@@ -2810,9 +2828,11 @@ VMI(S_INCR_DYNAMIC, 0, 0, ())
       ap[3] = DEF->functor->functor;
       ap += 4;
 
-      if ( true(DEF, P_ABSTRACT) )
+      if ( DEF->tabling && DEF->tabling->abstract != (size_t)-1 )
       { size_t i;
 
+	if ( DEF->tabling->abstract != 0 )
+	  Sdprintf("% WARNING: Only abstract(0) is supported\n");
 	for(i=0; i<DEF->functor->arity; i++)
 	  setVar(ap[i]);
       } else
@@ -2861,7 +2881,7 @@ VMI(S_WRAP, 0, 0, ())
   if ( codes[0] == encode(S_VIRGIN) )
   { PL_LOCK(L_PREDICATE);
     codes = createSupervisor(DEF->impl.wrapped.predicate);
-    MemoryBarrier();
+    MEMORY_BARRIER();
     DEF->impl.wrapped.supervisor = codes;
     PL_UNLOCK(L_PREDICATE);
   }
@@ -3097,6 +3117,12 @@ variable.  Also, for compilers that do register allocation it is unwise
 to give the compiler a hint to put ARGP not into a register.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+#define AR_THROW_EXCEPTION		\
+	do { resetArithStack(PASS_LD1); \
+	     AR_CLEANUP();		\
+	     THROW_EXCEPTION;		\
+	   } while(0)
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 A_ENTER: Prepare for arithmetic operations.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -3141,17 +3167,48 @@ VMI(A_MPZ, 0, VM_DYNARGC, (CA1_MPZ))
 {
 #ifdef O_GMP
   Number n = allocArithStack(PASS_LD1);
-  Word p = (Word)PC;
-  size_t size;
+  Word p = (Word)PC+1;				/* skip indirect header */
+  size_t limpsize;
+  int size = mpz_stack_size(*p++);
 
-  p++;				/* skip indirect header */
   n->type = V_MPZ;
-  n->value.mpz->_mp_size  = (int)*p++;
+  n->value.mpz->_mp_size  = size;
   n->value.mpz->_mp_alloc = 0;	/* avoid de-allocating */
-  size = sizeof(mp_limb_t) * abs(n->value.mpz->_mp_size);
+  limpsize = sizeof(mp_limb_t) * abs(size);
   n->value.mpz->_mp_d = (void*)p;
 
-  p += (size+sizeof(word)-1)/sizeof(word);
+  p += (limpsize+sizeof(word)-1)/sizeof(word);
+  PC = (Code)p;
+#endif
+  NEXT_INSTRUCTION;
+}
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+A_MPQ: Push mpq integer following PC
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(A_MPQ, 0, VM_DYNARGC, (CA1_MPQ))
+{
+#ifdef O_GMP
+  Number n = allocArithStack(PASS_LD1);
+  Word p = (Word)PC+1;				/* skip indirect header */
+  size_t limpsize;
+  int num_size = mpq_stack_size(*p++);
+  int den_size = mpq_stack_size(*p++);
+
+  n->type = V_MPQ;
+  mpq_numref(n->value.mpq)->_mp_size  = num_size;
+  mpq_numref(n->value.mpq)->_mp_alloc = 0;	/* avoid de-allocating */
+  limpsize = sizeof(mp_limb_t) * abs(num_size);
+  mpq_numref(n->value.mpq)->_mp_d = (void*)p;
+  p += (limpsize+sizeof(word)-1)/sizeof(word);
+
+  mpq_denref(n->value.mpq)->_mp_size  = den_size;
+  mpq_denref(n->value.mpq)->_mp_alloc = 0;	/* avoid de-allocating */
+  limpsize = sizeof(mp_limb_t) * abs(den_size);
+  mpq_denref(n->value.mpq)->_mp_d = (void*)p;
+  p += (limpsize+sizeof(word)-1)/sizeof(word);
+
   PC = (Code)p;
 #endif
   NEXT_INSTRUCTION;
@@ -3201,7 +3258,7 @@ a_var_n:
   switch(tag(*p2))
   { case TAG_INTEGER:
       n = allocArithStack(PASS_LD1);
-      get_integer(*p2, n);
+      get_rational(*p2, n);
       NEXT_INSTRUCTION;
     case TAG_FLOAT:
       n = allocArithStack(PASS_LD1);
@@ -3229,8 +3286,7 @@ a_var_n:
       { pushArithStack(&result PASS_LD);
 	NEXT_INSTRUCTION;
       } else
-      { resetArithStack(PASS_LD1);
-	THROW_EXCEPTION;
+      { AR_THROW_EXCEPTION;
       }
     }
   }
@@ -3296,13 +3352,41 @@ common_an:
   rc = ar_func_n((int)fn, an PASS_LD);
   LOAD_REGISTERS(qid);
   if ( !rc )
-  { resetArithStack(PASS_LD1);
-    THROW_EXCEPTION;
-  }
+    AR_THROW_EXCEPTION;
 
   NEXT_INSTRUCTION;
 }
 END_SHAREDVARS
+
+VMI(A_ROUNDTOWARDS_A, 0, 1, (CA1_INTEGER))
+{ int mode = (int)*PC++;
+  Number n = allocArithStack(PASS_LD1);
+
+  __PL_ar_ctx.femode = n->value.i = fegetround();
+  n->type = V_INTEGER;
+  set_rounding(mode);
+
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(A_ROUNDTOWARDS_V, 0, 1, (CA1_VAR))
+{ Word p = varFrameP(FR, (size_t)*PC++);
+  int rm;
+
+  deRef(p);
+  if ( isAtom(*p) && atom_to_rounding(*p, &rm) )
+  { Number n = allocArithStack(PASS_LD1);
+
+    __PL_ar_ctx.femode = n->value.i = fegetround();
+    n->type = V_INTEGER;
+    set_rounding(rm);
+    NEXT_INSTRUCTION;
+  } else
+  { resetArithStack(PASS_LD1);
+    THROW_EXCEPTION;
+  }
+}
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3315,7 +3399,7 @@ VMI(A_ADD, 0, 0, ())
   number r;
 
   SAVE_REGISTERS(qid);
-  rc = pl_ar_add(argv, argv+1, &r);
+  rc = pl_ar_add(argv+1, argv, &r);
   LOAD_REGISTERS(qid);
   popArgvArithStack(2 PASS_LD);
   if ( rc )
@@ -3323,8 +3407,7 @@ VMI(A_ADD, 0, 0, ())
     NEXT_INSTRUCTION;
   }
 
-  resetArithStack(PASS_LD1);
-  THROW_EXCEPTION;
+  AR_THROW_EXCEPTION;
 }
 
 
@@ -3338,7 +3421,7 @@ VMI(A_MUL, 0, 0, ())
   number r;
 
   SAVE_REGISTERS(qid);
-  rc = ar_mul(argv, argv+1, &r);
+  rc = ar_mul(argv+1, argv, &r);
   LOAD_REGISTERS(qid);
   popArgvArithStack(2 PASS_LD);
   if ( rc )
@@ -3346,8 +3429,7 @@ VMI(A_MUL, 0, 0, ())
     NEXT_INSTRUCTION;
   }
 
-  resetArithStack(PASS_LD1);
-  THROW_EXCEPTION;
+  AR_THROW_EXCEPTION;
 }
 
 
@@ -3558,9 +3640,6 @@ VMI(A_IS, VIF_BREAK, 0, ())		/* A is B */
       }
     }
 
-#ifdef O_GMP
-  can_bind:
-#endif
     ARGP++;				/* new_args must become 1 in */
     SAVE_REGISTERS(qid);		/* get_vmi_state() */
     rc = put_number(&c, n, ALLOW_GC PASS_LD);
@@ -3599,18 +3678,16 @@ VMI(A_IS, VIF_BREAK, 0, ())		/* A is B */
   } else
   { int rc;
 
-    if ( isInteger(*k) && intNumber(n) )
+    if ( isRational(*k) && ratNumber(n) )
     { number left;
 
-      get_integer(*k, &left);
+      get_rational(*k, &left);
       rc = (cmpNumbers(&left, n) == CMP_EQUAL);
       clearNumber(&left);
     } else if ( isFloat(*k) && floatNumber(n) )
-    { rc = (valFloat(*k) == n->value.f);
-#ifdef O_GMP
-    } else if ( n->type == V_MPQ )
-    { goto can_bind;
-#endif
+    { Word ak = valIndirectP(*k);
+
+      return memcmp((char*)&n->value.f, ak, sizeof(n->value.f)) == 0;
     } else
     { rc = FALSE;
     }
@@ -4065,6 +4142,7 @@ VMI(I_FEXITNDET, 0, 0, ())
       FR->clause = NULL;
       goto exit_checking_wakeup;
     case FALSE:
+      FR->clause = NULL;
       if ( exception_term )
 	THROW_EXCEPTION;
       DEBUG(CHK_SECURE, assert(BFR->value.PC == PC));
@@ -5613,7 +5691,8 @@ VMI(T_TRY_MPZ, 0, VM_DYNARGC, (CA1_JUMP,CA1_MPZ))
 { TRIE_TRY;
 }
 VMI(T_MPZ, 0, VM_DYNARGC, (CA1_MPZ))
-{ VMI_GOTO(T_STRING);
+{ SEPERATE_VMI;
+  VMI_GOTO(T_STRING);
 }
 
 VMI(T_TRY_STRING, 0, VM_DYNARGC, (CA1_JUMP,CA1_STRING))

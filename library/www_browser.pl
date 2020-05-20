@@ -37,9 +37,10 @@
           [ www_open_url/1,             % +UrlOrSpec
             expand_url_path/2           % +Spec, -URL
           ]).
-:- use_module(library(lists)).
+:- autoload(library(lists),[member/2]).
+
 :- if(exists_source(library(process))).
-:- use_module(library(process)).
+:- autoload(library(process), [process_create/3]).
 :- endif.
 
 :- multifile
@@ -218,7 +219,7 @@ user:url_path(swipl_man,      swipl('pldoc/doc_for?object=manual')).
 user:url_path(swipl_mail,     swipl('Mailinglist.html')).
 user:url_path(swipl_download, swipl('Download.html')).
 user:url_path(swipl_pack,     swipl('pack/list')).
-user:url_path(swipl_bugs,     swipl('bugzilla/')).
+user:url_path(swipl_bugs,     swipl('bug.html')).
 user:url_path(swipl_quick,    swipl('man/quickstart.html')).
 
 %!  expand_url_path(+Spec, -URL)

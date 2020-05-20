@@ -43,36 +43,12 @@
             version/1,                  % Add message to the banner
             prolog/0,                   % user toplevel predicate
             '$query_loop'/0,            % toplevel predicate
+            '$execute_query'/3,         % +Query, +Bindings, -Truth
             residual_goals/1,           % +Callable
             (initialization)/1,         % initialization goal (directive)
             '$thread_init'/0,           % initialise thread
             (thread_initialization)/1   % thread initialization goal
             ]).
-
-
-                 /*******************************
-                 *       FILE_SEARCH_PATH       *
-                 *******************************/
-
-:- multifile user:file_search_path/2.
-
-user:file_search_path(app_data, PrologAppData) :-
-    (   current_prolog_flag(windows, true)
-    ->  catch(win_folder(appdata, AppData), _, fail),
-        atom_concat(AppData, '/SWI-Prolog', PrologAppData),
-        (   exists_directory(PrologAppData)
-        ->  true
-        ;   catch(make_directory(PrologAppData), _, fail)
-        )
-    ;   catch(expand_file_name('~/lib/swipl', [PrologAppData]), _, fail)
-    ).
-user:file_search_path(app_preferences, Preferences) :-
-    (   current_prolog_flag(windows, true)
-    ->  Preferences = app_data('.')
-    ;   catch(expand_file_name(~, [UserHome]), _, fail)
-    ->  Preferences = UserHome
-    ).
-user:file_search_path(user_profile, app_preferences('.')).
 
 
                  /*******************************
@@ -126,7 +102,7 @@ version(Message) :-
     !,
     ensure_loaded(user:InitFile).
 '$load_init_file'(Base) :-
-    absolute_file_name(user_profile(Base), InitFile,
+    absolute_file_name(user_app_config(Base), InitFile,
                        [ access(read),
                          file_errors(fail)
                        ]),
@@ -134,6 +110,17 @@ version(Message) :-
     load_files(user:InitFile,
                [ scope_settings(false)
                ]).
+'$load_init_file'('init.pl') :-
+    (   current_prolog_flag(windows, true),
+        absolute_file_name(user_profile('swipl.ini'), InitFile,
+                           [ access(read),
+                             file_errors(fail)
+                           ])
+    ;   expand_file_name('~/.swiplrc', [InitFile]),
+        exists_file(InitFile)
+    ),
+    !,
+    print_message(warning, backcomp(init_file_moved(InitFile))).
 '$load_init_file'(_).
 
 '$load_system_init_file' :-
@@ -512,7 +499,7 @@ initialise_prolog :-
     '$set_file_search_paths',
     init_debug_flags,
     start_pldoc,
-    attach_packs,
+    opt_attach_packs,
     '$cmd_option_val'(init_file, OsFile),
     prolog_to_os_filename(File, OsFile),
     '$load_init_file'(File),
@@ -531,6 +518,12 @@ initialise_prolog :-
             run_main_init
         )
     ).
+
+opt_attach_packs :-
+    current_prolog_flag(packs, true),
+    !,
+    attach_packs.
+opt_attach_packs.
 
 set_toplevel :-
     '$cmd_option_val'(toplevel, TopLevelAtom),
@@ -756,7 +749,7 @@ setup_interactive :-
     '$set_file_search_paths',
     init_debug_flags,
     '$run_initialization',
-    attach_packs,
+    opt_attach_packs,
     use_module(library(qsave)),
     qsave:qsave_toplevel.
 
@@ -806,7 +799,7 @@ prolog :-
     read_expanded_query(Level, Query, Bindings),
     (   Query == end_of_file
     ->  print_message(query, query(eof))
-    ;   '$call_no_catch'('$execute'(Query, Bindings)),
+    ;   '$call_no_catch'('$execute_query'(Query, Bindings, _)),
         (   current_prolog_flag(toplevel_mode, recursive)
         ->  '$query_loop'
         ;   '$switch_toplevel_mode'(backtracking),
@@ -819,7 +812,7 @@ prolog :-
         read_expanded_query(BreakLev, Query, Bindings),
         (   Query == end_of_file
         ->  !, print_message(query, query(eof))
-        ;   '$execute'(Query, Bindings),
+        ;   '$execute_query'(Query, Bindings, _),
             (   current_prolog_flag(toplevel_mode, recursive)
             ->  !,
                 '$switch_toplevel_mode'(recursive),
@@ -1060,15 +1053,15 @@ subst_chars([H|T]) -->
                 *           EXECUTION           *
                 ********************************/
 
-%!  '$execute'(Goal, Bindings) is det.
+%!  '$execute_query'(Goal, Bindings, -Truth) is det.
 %
 %   Execute Goal using Bindings.
 
-'$execute'(Var, _) :-
+'$execute_query'(Var, _, true) :-
     var(Var),
     !,
     print_message(informational, var_query(Var)).
-'$execute'(Goal, Bindings) :-
+'$execute_query'(Goal, Bindings, Truth) :-
     '$current_typein_module'(TypeIn),
     '$dwim_correct_goal'(TypeIn:Goal, Bindings, Corrected),
     !,
@@ -1077,15 +1070,15 @@ subst_chars([H|T]) -->
         expand_goal(Corrected, Expanded),
         '$set_source_module'(M0)),
     print_message(silent, toplevel_goal(Expanded, Bindings)),
-    '$execute_goal2'(Expanded, Bindings).
-'$execute'(_, _) :-
+    '$execute_goal2'(Expanded, Bindings, Truth).
+'$execute_query'(_, _, false) :-
     notrace,
     print_message(query, query(no)).
 
-'$execute_goal2'(Goal, Bindings) :-
+'$execute_goal2'(Goal, Bindings, true) :-
     restore_debug,
-     '$current_typein_module'(TypeIn),
-    residue_vars(Goal, Vars, TypeIn:Delays),
+    '$current_typein_module'(TypeIn),
+    residue_vars(TypeIn:Goal, Vars, TypeIn:Delays),
     deterministic(Det),
     (   save_debug
     ;   restore_debug, fail
@@ -1095,7 +1088,7 @@ subst_chars([H|T]) -->
     (    \+ \+ write_bindings(NewBindings, Vars, Delays, Det)
     ->   !
     ).
-'$execute_goal2'(_, _) :-
+'$execute_goal2'(_, _, false) :-
     save_debug,
     print_message(query, query(no)).
 

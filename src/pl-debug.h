@@ -101,6 +101,7 @@
 #define MSG_MUTEX_GC		 56
 #define MSG_REC_ATTVAR		 57
 #define MSG_TTY			 58
+#define MSG_OS_DIR		 59
 
 #define MSG_READ_TOKEN		 60
 
@@ -159,6 +160,8 @@
 #define MSG_CGC_CONSIDER	 175
 #define MSG_CGC_STACK		 176
 #define MSG_CGC_PRED_REF	 177
+#define MSG_CGC_RETRACT		 178
+#define MSG_CGC_GENERATION	 179
 
 #define MSG_JIT			 180
 #define MSG_JIT_DELINDEX	 181
@@ -178,8 +181,12 @@
 
 #define MSG_ZIP			 250
 #define MSG_ZIP_STATE		 251
+#define MSG_WIN_API		 252
+#define MSG_WIN_DDE		 253
 
 #define MSG_MODULE_REF		 260
+
+#define MSG_STRING_BUFFER	 270
 
 #define MSG_TABLING_WORK	 300
 #define MSG_TABLING_MODED	 301
@@ -196,6 +203,8 @@
 #define MSG_TABLING_EXCEPTION	 312
 #define MSG_TABLING_SHARED	 313
 #define MSG_TABLING_ABOLISH	 314
+#define MSG_TABLING_CALL_SUBSUMPTION 315
+#define MSG_TABLING_RESTRAINT	 316
 
 #define TABLING_NO_EARLY_COMPLETION 320
 #define TABLING_NO_SIMPLIFY	 321		/* these affect behaviour */
@@ -204,6 +213,7 @@
 #define CHK_SECURE              1000
 #define CHK_HIGH_ARITY          1001
 #define CHK_HIGHER_ADDRESS      1002
+#define CHK_ATOM_GARBAGE_COLLECTED 1003
 
 typedef struct debug_topic
 { unsigned	code;

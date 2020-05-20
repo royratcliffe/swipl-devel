@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam
+    Copyright (c)  1985-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -36,12 +36,15 @@
 
 /*#define O_DEBUG 1*/
 #include "pl-incl.h"
+#include "pl-comp.h"
+#include "pl-arith.h"
 #include "pl-inline.h"
 #include "pl-dbref.h"
 #include "pl-wrap.h"
 #include "pl-prof.h"
 #include "pl-event.h"
 #include "pl-tabling.h"
+#include <fenv.h>
 #ifdef _MSC_VER
 #pragma warning(disable: 4102)		/* unreferenced labels */
 #endif
@@ -276,6 +279,7 @@ updateAlerted(PL_local_data_t *ld)
 #ifdef O_DEBUGGER
   if ( ld->_debugstatus.debugging )		mask |= ALERT_DEBUG;
 #endif
+  if ( ld->fli.string_buffers.top )		mask |= ALERT_BUFFER;
 
   ld->alerted = mask;
 
@@ -301,7 +305,7 @@ raiseSignal(PL_local_data_t *ld, int sig)
 
     do
     { alerted = ld->alerted;
-    } while ( !COMPARE_AND_SWAP(&ld->alerted, alerted, alerted|ALERT_SIGNAL) );
+    } while ( !COMPARE_AND_SWAP_INT(&ld->alerted, alerted, alerted|ALERT_SIGNAL) );
 
     return TRUE;
   }
@@ -1394,7 +1398,7 @@ localDefinition(Definition def ARG_LD)
 	outOfCore();
 
       memset(newblock, 0, bs*sizeof(Definition));
-      if ( !COMPARE_AND_SWAP(&v->blocks[idx], NULL, newblock-bs) )
+      if ( !COMPARE_AND_SWAP_PTR(&v->blocks[idx], NULL, newblock-bs) )
 	PL_free(newblock);
     }
   }
@@ -1784,7 +1788,7 @@ argument goal. Exceptions from the  recover   goal  should be passed (to
 avoid a loop and allow for re-throwing).   With  thanks from Gertjan van
 Noord.
 
-findCatchExit() can do GC/shift!  The  return   value  is  a local-frame
+findCatcher() can do  GC/shift!  The  return   value  is  a  local-frame
 reference, so we can deal with relocation of the local stack.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -2747,12 +2751,6 @@ PL_yielded(qid_t qid)
 	  qf->registers.fr = NULL; \
 	}
 
-#ifndef ASM_NOP
-int _PL_nop_counter;
-
-#define ASM_NOP _PL_nop_counter++
-#endif
-
 typedef enum
 { uread = 0,				/* Unification in read-mode */
   uwrite				/* Unification in write mode */
@@ -2827,10 +2825,13 @@ pl-comp.c
 				     DbgPrintInstruction(FR, PC); \
 				     goto *(void *)((intptr_t)(*PC++)); \
 				   } while(0)
-#ifndef ASM_NOP
-#define ASM_NOP asm("nop")
-#endif
-#define SEPERATE_VMI ASM_NOP
+
+/* This macro must ensure that two identical VMI instructions do not get
+ * merged onto the same address by the compiler, causing decompilation
+ * which translates the addresses back into the VMI number to fail.
+ * initWamTable() verfies this does not happen.
+ */
+#define SEPERATE_VMI { static volatile int nop = 0; (void)nop; }
 
 #else /* VMCODE_IS_ADDRESS */
 
@@ -3205,6 +3206,11 @@ next_choice:
 #ifdef O_DEBUG_BACKTRACK
   last_choice = ch->type;
 #endif
+
+  if ( (LD->alerted & ALERT_BUFFER) )
+  { LD->alerted &= ~ALERT_BUFFER;
+    release_string_buffers_from_frame(FR PASS_LD);
+  }
 
   switch(ch->type)
   { case CHP_JUMP:

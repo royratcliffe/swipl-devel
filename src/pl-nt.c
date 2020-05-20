@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1995-2016, University of Amsterdam
+    Copyright (c)  1995-2019, University of Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -111,7 +112,8 @@ PL_wait_for_console_input(void *handle)
     } else if ( rc == WAIT_OBJECT_0 )
     { return TRUE;
     } else
-    { Sdprintf("MsgWaitForMultipleObjects(): 0x%x\n", rc);
+    { DEBUG(MSG_WIN_API,
+	    Sdprintf("MsgWaitForMultipleObjects(): 0x%x\n", rc));
     }
   }
 }
@@ -331,7 +333,7 @@ findExecutable(const char *module, char *exe, size_t exelen)
   if ( module )
   { if ( !(hmod = GetModuleHandle(module)) )
     { hmod = GetModuleHandle("libswipl.dll");
-      DEBUG(0,
+      DEBUG(MSG_WIN_API,
 	    Sdprintf("Warning: could not find module from \"%s\"\n"
 		     "Warning: Trying %s to find home\n",
 		     module,
@@ -557,8 +559,8 @@ win_shell(term_t op, term_t file, term_t how)
   UINT h;
   HINSTANCE instance;
 
-  if ( !PL_get_wchars(op,   &lo, &o, CVT_ALL|CVT_EXCEPTION|BUF_RING) ||
-       !PL_get_wchars(file, &lf, &f, CVT_ALL|CVT_EXCEPTION|BUF_RING) ||
+  if ( !PL_get_wchars(op,   &lo, &o, CVT_ALL|CVT_EXCEPTION|BUF_STACK) ||
+       !PL_get_wchars(file, &lf, &f, CVT_ALL|CVT_EXCEPTION|BUF_STACK) ||
        !get_showCmd(how, &h) )
     fail;
 
@@ -667,6 +669,11 @@ load_library_search_flags(void)
 	 (f_RemoveDllDirectory = (void*)GetProcAddress(kernel, "RemoveDllDirectory")) )
     { flags = ( LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|
 		LOAD_LIBRARY_SEARCH_DEFAULT_DIRS );
+      DEBUG(MSG_WIN_API,
+	    Sdprintf("LoadLibraryExW() flags are supported\n"));
+    } else
+    { DEBUG(MSG_WIN_API,
+	    Sdprintf("LoadLibraryExW() flags are NOT supported\n"));
     }
     done = TRUE;
   }
@@ -689,7 +696,11 @@ PRED_IMPL("win_add_dll_directory", 2, win_add_dll_directory, 0)
       return PL_representation_error("file_name");
     if ( load_library_search_flags() )
     { if ( (cookie = (*f_AddDllDirectoryW)(dirw)) )
+      { DEBUG(MSG_WIN_API,
+	      Sdprintf("AddDllDirectory(%Ws) ok\n", dirw));
+
 	return PL_unify_int64(A2, (int64_t)(uintptr_t)cookie);
+      }
       return PL_error(NULL, 0, WinError(), ERR_SYSCALL, "AddDllDirectory()");
     } else
       return FALSE;
@@ -741,6 +752,8 @@ PL_dlopen(const char *file, int flags)	/* file is in UTF-8, POSIX path */
   { dlmsg = "Name too long";
     return NULL;
   }
+
+  DEBUG(MSG_WIN_API, Sdprintf("dlopen(%Ws)\n", wfile));
 
   if ( is_windows_abs_path(wfile) )
     llflags |= load_library_search_flags();
@@ -848,6 +861,8 @@ static const folderid folderids[] =
 { { CSIDL_COMMON_ALTSTARTUP, "common_altstartup" },
   { CSIDL_ALTSTARTUP, "altstartup" },
   { CSIDL_APPDATA, "appdata" },
+  { CSIDL_COMMON_APPDATA, "common_appdata" },
+  { CSIDL_LOCAL_APPDATA, "local_appdata" },
   { CSIDL_CONTROLS, "controls" },
   { CSIDL_COOKIES, "cookies" },
   { CSIDL_DESKTOP, "desktop" },

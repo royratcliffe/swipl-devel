@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  2011-2019, University of Amsterdam
+    Copyright (c)  2011-2020, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -42,16 +42,36 @@
             syntax_colour/2,            % +Class, -Attributes
             syntax_message//1           % +Class
           ]).
-:- use_module(library(prolog_xref)).
-:- use_module(library(predicate_options)).
-:- use_module(library(prolog_source)).
-:- use_module(library(lists)).
-:- use_module(library(operators)).
-:- use_module(library(debug)).
-:- use_module(library(error)).
-:- use_module(library(option)).
-:- use_module(library(record)).
-:- use_module(library(apply)).
+:- use_module(library(record),[(record)/1, op(_,_,record)]).
+:- autoload(library(apply),[maplist/3]).
+:- autoload(library(debug),[debug/3]).
+:- autoload(library(error),[is_of_type/2]).
+:- autoload(library(lists),[member/2,append/3]).
+:- autoload(library(operators),
+	    [push_operators/1,pop_operators/0,push_op/3]).
+:- autoload(library(option),[option/3]).
+:- autoload(library(predicate_options),
+	    [current_option_arg/2,current_predicate_options/3]).
+:- autoload(library(prolog_clause),[predicate_name/2]).
+:- autoload(library(prolog_source),
+	    [ load_quasi_quotation_syntax/2,
+	      read_source_term_at_location/3,
+	      prolog_canonical_source/2
+	    ]).
+:- autoload(library(prolog_xref),
+	    [ xref_option/2,
+	      xref_public_list/3,
+	      xref_op/2,
+	      xref_prolog_flag/4,
+	      xref_module/2,
+	      xref_meta/3,
+	      xref_source_file/4,
+	      xref_defined/3,
+	      xref_called/3,
+	      xref_defined_class/3,
+	      xref_exported/2,
+	      xref_hook/1
+	    ]).
 
 :- meta_predicate
     prolog_colourise_stream(+, +, 3),
@@ -1543,6 +1563,10 @@ colourise_term_arg(Integer, TB, Pos) :-
     integer(Integer),
     !,
     colour_item(int, TB, Pos).
+colourise_term_arg(Rational, TB, Pos) :-
+    rational(Rational),
+    !,
+    colour_item(rational(Rational), TB, Pos).
 colourise_term_arg(Float, TB, Pos) :-
     float(Float),
     !,
@@ -1694,6 +1718,17 @@ colourise_declaration(Module:PI, _, TB,
     colour_item(goal(extern(M), Goal), TB, NamePos),
     colour_item(predicate_indicator, TB, FF-FT),
     colour_item(arity, TB, ArityPos).
+colourise_declaration(Module:PI, _, TB,
+                      term_position(_,_,QF,QT,[PM,PG])) :-
+    atom(Module), nonvar(PI), PI = Name/Arity,
+    !,                                  % partial predicate indicators
+    colourise_module(Module, TB, PM),
+    colour_item(functor, TB, QF-QT),
+    (   (var(Name) ; atom(Name)),
+        (var(Arity) ; integer(Arity), Arity >= 0)
+    ->  colourise_term_arg(PI, TB, PG)
+    ;   colour_item(type_error(predicate_indicator), TB, PG)
+    ).
 colourise_declaration(op(N,T,P), Which, TB, Pos) :-
     (   Which == export
     ;   Which == import
@@ -1701,6 +1736,17 @@ colourise_declaration(op(N,T,P), Which, TB, Pos) :-
     !,
     colour_item(exported_operator, TB, Pos),
     colourise_op_declaration(op(N,T,P), TB, Pos).
+colourise_declaration(Module:Goal, table, TB,
+                      term_position(_,_,QF,QT,
+                                    [PM,term_position(_F,_T,FF,FT,ArgPos)])) :-
+    atom(Module), callable(Goal),
+    !,
+    colourise_module(Module, TB, PM),
+    colour_item(functor, TB, QF-QT),
+    goal_classification(TB, Module:Goal, [], Class),
+    compound_name_arguments(Goal, _, Args),
+    colour_item(goal(Class, Goal), TB, FF-FT),
+    colourise_table_modes(Args, TB, ArgPos).
 colourise_declaration(Goal, table, TB, term_position(_F,_T,FF,FT,ArgPos)) :-
     callable(Goal),
     !,
@@ -1913,24 +1959,44 @@ colourise_decl_options(Option, Which, TB, Pos) :-
     valid_decl_option(Option, Which),
     !,
     functor(Option, Name, _),
-    colour_item(decl_option(Name), TB, Pos).
+    (   Pos = term_position(_,_,FF,FT,[ArgPos])
+    ->  colour_item(decl_option(Name), TB, FF-FT),
+        (   arg(1, Option, Value),
+            nonneg_or_false(Value)
+        ->  colourise_term_arg(Value, TB, ArgPos)
+        ;   colour_item(type_error(decl_option_value(Which)), TB, ArgPos)
+        )
+    ;   colour_item(decl_option(Name), TB, Pos)
+    ).
 colourise_decl_options(_, Which, TB, Pos) :-
     colour_item(type_error(decl_option(Which)), TB, Pos).
 
-valid_decl_option(subsumptive,   table).
-valid_decl_option(variant,       table).
-valid_decl_option(incremental,   table).
-valid_decl_option(opaque,        table).
-valid_decl_option(incremental,   dynamic).
-valid_decl_option(abstract(0),   dynamic).
-valid_decl_option(shared,        table).
-valid_decl_option(private,       table).
-valid_decl_option(shared,        dynamic).
-valid_decl_option(private,       dynamic).
-valid_decl_option(local,         dynamic).
-valid_decl_option(multifile,     _).
-valid_decl_option(discontiguous, _).
-valid_decl_option(volatile,      _).
+valid_decl_option(subsumptive,         table).
+valid_decl_option(variant,             table).
+valid_decl_option(incremental,         table).
+valid_decl_option(opaque,              table).
+valid_decl_option(incremental,         dynamic).
+valid_decl_option(abstract(_),         dynamic).
+valid_decl_option(shared,              table).
+valid_decl_option(private,             table).
+valid_decl_option(subgoal_abstract(_), table).
+valid_decl_option(answer_abstract(_),  table).
+valid_decl_option(max_answers(_),      table).
+valid_decl_option(shared,              dynamic).
+valid_decl_option(private,             dynamic).
+valid_decl_option(local,               dynamic).
+valid_decl_option(multifile,           _).
+valid_decl_option(discontiguous,       _).
+valid_decl_option(volatile,            _).
+
+nonneg_or_false(Value) :-
+    var(Value),
+    !.
+nonneg_or_false(Value) :-
+    integer(Value), Value >= 0,
+    !.
+nonneg_or_false(off).
+nonneg_or_false(false).
 
 %!  colourise_op_declaration(Op, TB, Pos) is det.
 
@@ -2233,6 +2299,8 @@ def_goal_colours(module(_,_),            built_in-[identifier,exports]).
 def_goal_colours(module(_,_,_),          built_in-[identifier,exports,langoptions]).
 def_goal_colours(use_module(_),          built_in-[imported_file]).
 def_goal_colours(use_module(File,_),     built_in-[file,imports(File)]).
+def_goal_colours(autoload(_),            built_in-[imported_file]).
+def_goal_colours(autoload(File,_),       built_in-[file,imports(File)]).
 def_goal_colours(reexport(_),            built_in-[file]).
 def_goal_colours(reexport(File,_),       built_in-[file,imports(File)]).
 def_goal_colours(dynamic(_),             built_in-[declarations(dynamic)]).
@@ -2373,6 +2441,7 @@ def_style(singleton,               [bold(true), colour(red4)]).
 def_style(unbound,                 [colour(red), bold(true)]).
 def_style(quoted_atom,             [colour(navy_blue)]).
 def_style(string,                  [colour(navy_blue)]).
+def_style(rational(_),		   [colour(steel_blue)]).
 def_style(codes,                   [colour(navy_blue)]).
 def_style(chars,                   [colour(navy_blue)]).
 def_style(nofile,                  [colour(red)]).
@@ -2456,6 +2525,7 @@ term_colours((prolog:Head --> _),
     prolog_message_hook(Head).
 
 prolog_message_hook(message(_)).
+prolog_message_hook(deprecated(_)).
 prolog_message_hook(error_message(_)).
 prolog_message_hook(message_context(_)).
 prolog_message_hook(message_location(_)).
@@ -2878,6 +2948,8 @@ syntax_message(decl_option(shared)) -->
     [ 'Tables or clauses are shared between threads' ].
 syntax_message(decl_option(_Opt)) -->
     [ 'Predicate property' ].
+syntax_message(rational(Value)) -->
+    [ 'Rational number ~w'-[Value] ].
 
 goal_message(meta, _) -->
     [ 'Meta call' ].

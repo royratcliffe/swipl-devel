@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2017, University of Amsterdam
+    Copyright (c)  2011-2020, University of Amsterdam
                               VU University Amsterdam
     All rights reserved.
 
@@ -54,6 +54,7 @@ handling times must be cleaned, but that not only holds for this module.
 
 #define NEEDS_SWINSOCK
 #include "pl-incl.h"
+#include "pl-arith.h"
 #include "pl-ctype.h"
 #include "pl-utf8.h"
 #include "pl-stream.h"
@@ -174,7 +175,7 @@ getStreamContext(IOSTREAM *s)
     ctx->alias_head = ctx->alias_tail = NULL;
     ctx->filename = NULL_ATOM;
     ctx->flags = 0;
-    if ( COMPARE_AND_SWAP(&s->context, NULL, ctx) )
+    if ( COMPARE_AND_SWAP_PTR(&s->context, NULL, ctx) )
       addNewHTable(streamContext, s, ctx);
     else
       freeHeap(ctx, sizeof(*ctx));
@@ -284,7 +285,7 @@ freeStream(IOSTREAM *s)
   PL_LOCK(L_FILE);
   unaliasStream(s, NULL_ATOM);
   ctx = s->context;
-  if ( ctx && COMPARE_AND_SWAP(&s->context, ctx, NULL) )
+  if ( ctx && COMPARE_AND_SWAP_PTR(&s->context, ctx, NULL) )
   { deleteHTable(streamContext, s);
     if ( ctx->filename != NULL_ATOM )
     { PL_unregister_atom(ctx->filename);
@@ -385,9 +386,9 @@ initIO(void)
   Soutput->position = &Sinput->posbuf;
   Serror->position  = &Sinput->posbuf;
 
-  ttymode = TTY_COOKED;
   PushTty(Sinput, &ttytab, TTY_SAVE);
   ttymodified = FALSE;
+  ttyfileno = Sfileno(Sinput);
   LD->prompt.current = ATOM_prompt;
   PL_register_atom(ATOM_prompt);
 
@@ -412,8 +413,6 @@ initIO(void)
 		 /*******************************
 		 *	     GET HANDLES	*
 		 *******************************/
-
-#ifdef O_PLMT
 
 static inline IOSTREAM *
 getStream(IOSTREAM *s)
@@ -446,21 +445,6 @@ releaseStream(IOSTREAM *s)
 { if ( s->magic == SIO_MAGIC )
     Sunlock(s);
 }
-
-#else /*O_PLMT*/
-
-static inline IOSTREAM *
-getStream(IOSTREAM *s)
-{ if ( s && s->magic == SIO_MAGIC )
-    return s;
-
-  return NULL;
-}
-
-#define tryGetStream(s) (s)
-#define releaseStream(s)
-
-#endif /*O_PLMT*/
 
 int
 PL_release_stream(IOSTREAM *s)
@@ -998,16 +982,23 @@ PRED_IMPL("stream_pair", 3, stream_pair, 0)
 
   if ( !PL_is_variable(A1) )
   { stream_ref *ref;
-    atom_t a;
+    atom_t a = 0;
     PL_blob_t *type;
     int rc = TRUE;
 
-    if ( !PL_get_atom(A1, &a) ||
-	 !(ref=PL_blob_data(a, NULL, &type)) ||
-	 type != &stream_blob )
+    if ( PL_get_atom(A1, &a) &&
+	 (ref=PL_blob_data(a, NULL, &type)) &&
+	 type == &stream_blob )
+    { if ( ref->read && !ref->read->erased )
+	rc = rc && PL_unify_stream_or_alias(A2, ref->read);
+      if ( ref->write && !ref->write->erased )
+	rc = rc && PL_unify_stream_or_alias(A3, ref->write);
+
+      return rc;
+    } else
     { IOSTREAM *s;
 
-      if ( get_stream_handle(a, &s, SH_ERRORS|SH_ALIAS|SH_UNLOCKED) )
+      if ( a && get_stream_handle(a, &s, SH_ERRORS|SH_ALIAS|SH_UNLOCKED) )
       { if ( (s->flags & SIO_INPUT) )
 	  rc = PL_unify_stream_or_alias(A2, s);
 	else
@@ -1018,13 +1009,6 @@ PRED_IMPL("stream_pair", 3, stream_pair, 0)
 
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_stream_pair, A1);
     }
-
-    if ( ref->read && !ref->read->erased )
-      rc = rc && PL_unify_stream_or_alias(A2, ref->read);
-    if ( ref->write && !ref->write->erased )
-      rc = rc && PL_unify_stream_or_alias(A3, ref->write);
-
-    return rc;
   }
 
   if ( getInputStream(A2, S_DONTCARE, &in) &&
@@ -1178,8 +1162,8 @@ streamStatus(IOSTREAM *s)
 		 *******************************/
 
 ttybuf	ttytab;				/* saved terminal status on entry */
-int	ttymode;			/* Current tty mode */
 int	ttymodified;			/* is tty modified? */
+int	ttyfileno = -1;
 
 typedef struct input_context * InputContext;
 typedef struct output_context * OutputContext;
@@ -1208,7 +1192,7 @@ dieIO(void)
 { if ( GD->io_initialised )
   { noprotocol();
     closeFiles(TRUE);
-    if ( ttymodified )
+    if ( ttymodified && ttyfileno == Sfileno(Sinput) )
       PopTty(Sinput, &ttytab, TRUE);
   }
 }
@@ -2936,17 +2920,6 @@ Peek input from Stream for  Len  characters   or  the  entire content of
 Stream.
 */
 
-static size_t
-roundp2(size_t i)
-{ size_t r = 2;
-
-  while(r<i)
-    r = r<<1;
-
-  return r;
-}
-
-
 PRED_IMPL("peek_string", 3, peek_string, 0)
 { PRED_LD
   IOSTREAM *s;
@@ -2956,9 +2929,7 @@ PRED_IMPL("peek_string", 3, peek_string, 0)
     return FALSE;
 
   if ( getInputStream(A1, S_DONTCARE, &s) )
-  { if ( s->bufsize < len )
-      Ssetbuffer(s, NULL, roundp2(len));
-    for(;;)
+  { for(;;)
     { if ( s->limitp > s->bufp )
       { PL_chars_t text;
 
@@ -5442,14 +5413,16 @@ PRED_IMPL("peek_char", 1, peek_char1, 0)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 set_prolog_IO(+In, +Out, +Error)
-
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define WRAP_CLEAR_FLAGS (SIO_FILE)
 
 typedef struct wrappedIO
 { void		   *wrapped_handle;	/* original handle */
   IOFUNCTIONS      *wrapped_functions;	/* original functions */
   IOSTREAM	   *wrapped_stream;	/* stream we wrapped */
   IOFUNCTIONS       functions;		/* new function block */
+  int		    saved_flags;	/* SIO_flags we must restore */
 } wrappedIO;
 
 
@@ -5459,7 +5432,7 @@ Sread_user(void *handle, char *buf, size_t size)
   wrappedIO *wio = handle;
   ssize_t rc;
 
-  if ( LD->prompt.next && ttymode != TTY_RAW )
+  if ( LD->prompt.next && Sttymode(wio->wrapped_stream) != TTY_RAW )
     PL_write_prompt(TRUE);
   else
     Sflush(Suser_output);
@@ -5489,6 +5462,8 @@ closeWrappedIO(void *handle)
 
   wio->wrapped_stream->functions = wio->wrapped_functions;
   wio->wrapped_stream->handle = wio->wrapped_handle;
+  clear(wio->wrapped_stream, WRAP_CLEAR_FLAGS);
+  set(wio->wrapped_stream, wio->saved_flags);
   PL_free(wio);
 
   return rval;
@@ -5508,7 +5483,6 @@ controlWrappedIO(void *handle, int action, void *arg)
     rval = 0;
 
   return rval;
-
 }
 
 
@@ -5521,6 +5495,8 @@ wrapIO(IOSTREAM *s,
   wio->wrapped_functions = s->functions;
   wio->wrapped_handle =	s->handle;
   wio->wrapped_stream = s;
+  wio->saved_flags    = s->flags & WRAP_CLEAR_FLAGS;
+  clear(s, WRAP_CLEAR_FLAGS);
 
   wio->functions = *s->functions;
   if ( read  ) wio->functions.read  = read;

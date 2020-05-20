@@ -1,4 +1,5 @@
 check_include_file(inttypes.h HAVE_INTTYPES_H)
+check_include_file(stdint.h HAVE_STDINT_H)
 check_include_file(stdlib.h HAVE_STDLIB_H)
 check_include_file(strings.h HAVE_STRINGS_H)
 check_include_file(wchar.h HAVE_WCHAR_H)
@@ -49,10 +50,26 @@ check_include_file(vfork.h HAVE_VFORK_H)
 check_include_file(mach/thread_act.h HAVE_MACH_THREAD_ACT_H)
 check_include_file(sys/stropts.h HAVE_SYS_STROPTS_H)
 check_include_file(zlib.h HAVE_ZLIB_H)
+check_include_file(crt_externs.h HAVE_CRT_EXTERNS_H)
 
-check_library_exists(dl dlopen	      "" HAVE_LIBDL)
-check_library_exists(m  sin           "" HAVE_LIBM)
-check_library_exists(rt clock_gettime "" HAVE_LIBRT)
+check_c_source_compiles(
+    "int val = 1;
+     int main() { __atomic_add_fetch(&val, 2, __ATOMIC_SEQ_CST); }"
+    HAVE_GCC_ATOMIC)
+check_c_source_compiles(
+    "#include <stdint.h>
+     uint64_t val = 1;
+     int main() { __atomic_add_fetch(&val, 2, __ATOMIC_SEQ_CST); }"
+    HAVE_GCC_ATOMIC_8)
+if(HAVE_GCC_ATOMIC AND NOT HAVE_GCC_ATOMIC_8)
+check_library_exists(atomic __atomic_add_fetch_4 "" HAVE_LIBATOMIC)
+else()
+set(HAVE_LIBATOMIC OFF CACHE BOOL "No need to link with -latomic")
+endif()
+
+check_library_exists(dl	dlopen	      "" HAVE_LIBDL)
+check_library_exists(m	sin	      "" HAVE_LIBM)
+check_library_exists(rt	clock_gettime "" HAVE_LIBRT)
 
 if(HAVE_LIBDL)
   set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} dl)
@@ -90,6 +107,7 @@ check_type_size("long" SIZEOF_LONG)
 check_type_size("void *" SIZEOF_VOIDP)
 check_type_size("long long" SIZEOF_LONG_LONG)
 check_type_size("wchar_t" SIZEOF_WCHAR_T)
+check_type_size("off_t" SIZEOF_OFF_T)
 if(USE_GMP)
   check_type_size("mp_bitcnt_t" SIZEOF_MP_BITCNT_T)
 
@@ -132,6 +150,7 @@ check_function_exists(readlink HAVE_READLINK)
 check_function_exists(remove HAVE_REMOVE)
 check_function_exists(rename HAVE_RENAME)
 check_function_exists(stat HAVE_STAT)
+check_function_exists(fopen64 HAVE_FOPEN64)
 # Strings and locale
 check_function_exists(memmove HAVE_MEMMOVE)
 check_function_exists(strcasecmp HAVE_STRCASECMP)
@@ -144,6 +163,7 @@ check_function_exists(localeconv HAVE_LOCALECONV)
 check_function_exists(wcsdup HAVE_WCSDUP)
 check_function_exists(wcsxfrm HAVE_WCSXFRM)
 # processes
+check_function_exists(getuid HAVE_GETUID)
 check_function_exists(getpid HAVE_GETPID)
 check_function_exists(waitpid HAVE_WAITPID)
 # environment, config
@@ -154,6 +174,7 @@ check_function_exists(sysconf HAVE_SYSCONF)
 check_function_exists(confstr HAVE_CONFSTR)
 check_function_exists(getrlimit HAVE_GETRLIMIT)
 check_function_exists(getrusage HAVE_GETRUSAGE)
+check_function_exists(_NSGetEnviron HAVE__NSGETENVIRON)
 # dynamic linking
 check_function_exists(shl_load HAVE_SHL_LOAD)
 check_function_exists(dlopen HAVE_DLOPEN)
@@ -170,6 +191,7 @@ check_function_exists(sigblock HAVE_SIGBLOCK)
 endif(USE_SIGNALS)
 check_function_exists(kill HAVE_KILL)
 check_function_exists(backtrace HAVE_BACKTRACE)
+check_function_exists(alarm HAVE_ALARM)
 # Allocation
 check_function_exists(mtrace HAVE_MTRACE)
 # terminal
@@ -208,7 +230,6 @@ check_function_exists(clock HAVE_CLOCK)
 check_function_exists(times HAVE_TIMES)
 check_function_exists(delay HAVE_DELAY)
 check_function_exists(dossleep HAVE_DOSSLEEP)
-check_function_exists(clock_gettime HAVE_CLOCK_GETTIME)
 # threads and scheduling
 if(CMAKE_USE_PTHREADS_INIT)
 check_c_source_compiles(

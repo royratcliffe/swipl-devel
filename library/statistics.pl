@@ -42,18 +42,24 @@
             profile/1,                  % :Goal
             profile/2,                  % :Goal, +Options
             show_profile/1,             % +Options
-            profile_data/1              % -Dict
+            profile_data/1,             % -Dict
+            profile_procedure_data/2    % :PI, -Data
           ]).
-:- use_module(library(lists)).
-:- use_module(library(pairs)).
-:- use_module(library(option)).
-:- use_module(library(error)).
+:- autoload(library(error),[must_be/2]).
+:- autoload(library(lists),[append/3,member/2]).
+:- autoload(library(option),[option/3]).
+:- autoload(library(pairs),[map_list_to_pairs/3,pairs_values/2]).
+:- autoload(library(prolog_code),
+	    [predicate_sort_key/2,predicate_label/2]).
+
+
 :- set_prolog_flag(generate_debug_info, false).
 
 :- meta_predicate
     time(0),
     profile(0),
-    profile(0, +).
+    profile(0, +),
+    profile_procedure_data(:, -).
 
 /** <module> Get information about resource usage
 
@@ -242,7 +248,8 @@ engine_counts --> [].
 thread_statistics(Thread, Stats) :-
     thread_property(Thread, status(Status)),
     human_thread_id(Thread, Id),
-    (   catch(thread_stats(Thread, Stacks, Time), _, fail)
+    Error = error(_,_),
+    (   catch(thread_stats(Thread, Stacks, Time), Error, fail)
     ->  Stats = thread{id:Id,
                        status:Status,
                        time:Time,
@@ -395,7 +402,7 @@ show_profile_(Options) :-
 show_profile_(Options) :-
     prof_statistics(Stat),
     sort_on(Options, SortKey),
-    findall(Node, prof_node(Node), Nodes),
+    findall(Node, profile_procedure_data(_:_, Node), Nodes),
     sort_prof_nodes(SortKey, Nodes, Sorted),
     format('~`=t~69|~n'),
     format('Total time: ~3f seconds~n', [Stat.time]),
@@ -412,8 +419,16 @@ sort_on(Options, ticks_self) :-
     !.
 sort_on(_, ticks).
 
+sort_prof_nodes(ticks, Nodes, Sorted) :-
+    !,
+    map_list_to_pairs(key_ticks, Nodes, Keyed),
+    sort(1, >=, Keyed, KeySorted),
+    pairs_values(KeySorted, Sorted).
 sort_prof_nodes(Key, Nodes, Sorted) :-
     sort(Key, >=, Nodes, Sorted).
+
+key_ticks(Node, Ticks) :-
+    Ticks is Node.ticks_self + Node.ticks_siblings.
 
 show_plain([], _, _, _).
 show_plain(_, 0, _, _) :- !.
@@ -457,7 +472,7 @@ show_plain(Node, Stat, Key) :-
 %         Nodes in the call graph.
 %     - nodes
 %       List of nodes.  Each node provides:
-%       - predicate:Head
+%       - predicate:PredicateIndicator
 %       - ticks_self:Count
 %       - ticks_siblings:Count
 %       - call:Count
@@ -469,7 +484,7 @@ show_plain(Node, Stat, Key) :-
 %    _Relative_ is a term of the shape below that represents a caller or
 %    callee. Future versions are likely to use a dict instead.
 %
-%        node(Predicate, CycleID, Ticks, TicksSiblings,
+%        node(PredicateIndicator, CycleID, Ticks, TicksSiblings,
 %             Calls, Redos, Exits)
 
 profile_data(Data) :-
@@ -480,7 +495,7 @@ profile_data(Data) :-
 
 profile_data_(profile{summary:Summary, nodes:Nodes}) :-
     prof_statistics(Summary),
-    findall(Node, prof_node(Node), Nodes).
+    findall(Node, profile_procedure_data(_:_, Node), Nodes).
 
 %!  prof_statistics(-Node) is det.
 %
@@ -492,46 +507,33 @@ prof_statistics(summary{samples:Samples, ticks:Ticks,
                         accounting:Account, time:Time, nodes:Nodes}) :-
     '$prof_statistics'(Samples, Ticks, Account, Time, Nodes).
 
-%!  prof_node(-Node) is nondet.
+%!  profile_procedure_data(?Pred, -Data:dict) is nondet.
 %
-%   Collect data for each of the  profiles   predicates.  Node is a dict
-%   with the fields:
-%
-%     - predicate:Head
-%     - ticks_self:Count
-%     - ticks_siblings:Count
-%     - call:Count
-%     - redo:Count
-%     - exit:Count
-%     - callers:list_of(reference(Head, Calls, Redos))
-%     - callees:list_of(reference(Head, Calls, Redos))
+%   Collect data for Pred. If Pred is   unbound  data for each predicate
+%   that has profile data available is   returned.  Data is described in
+%   profile_data/1 as an element of the `nodes` key.
 
-prof_node(Node) :-
-    Node = node{predicate:(Pred),
+profile_procedure_data(Pred, Node) :-
+    Node = node{predicate:Pred,
                 ticks_self:TicksSelf, ticks_siblings:TicksSiblings,
                 call:Call, redo:Redo, exit:Exit,
                 callers:Parents, callees:Siblings},
-    profiled_predicates(Preds),
-    member(Pred, Preds),
+    (   specified(Pred)
+    ->  true
+    ;   profiled_predicates(Preds),
+        member(Pred, Preds)
+    ),
     '$prof_procedure_data'(Pred,
                            TicksSelf, TicksSiblings,
                            Call, Redo, Exit,
                            Parents, Siblings).
 
+specified(Module:Head) :-
+    atom(Module),
+    callable(Head).
+
 profiled_predicates(Preds) :-
-    setof(Pred, prof_impl(Pred), Preds0),
-    join_impl(Preds0, Preds).
-
-join_impl([], []).
-join_impl([H|T0], [H|T]) :-
-    same(H, T0, T1),
-    join_impl(T1, T).
-
-same(H, [H|T0], T) :-
-    !,
-    same(H, T0, T).
-same(_, L, L).
-
+    setof(Pred, prof_impl(Pred), Preds).
 
 prof_impl(Pred) :-
     prof_node_id(Node),
@@ -546,8 +548,9 @@ prof_node_id_below(N, Root) :-
     ;   prof_node_id_below(N, N0)
     ).
 
-node_id_pred(Node, Pred) :-             % TBD: add as built-in
-    '$prof_node'(Node, Pred, _, _, _, _, _).
+node_id_pred(Node, Pred) :-
+    '$prof_node'(Node, Pred, _Calls, _Redos, _Exits, _Recur,
+                 _Ticks, _SiblingTicks).
 
 %!  value(+Key, +NodeData, -Value)
 %
@@ -555,7 +558,7 @@ node_id_pred(Node, Pred) :-             % TBD: add as built-in
 
 value(name, Data, Name) :-
     !,
-    predicate_functor_name(Data.predicate, Name).
+    predicate_sort_key(Data.predicate, Name).
 value(label, Data, Label) :-
     !,
     predicate_label(Data.predicate, Label).
@@ -573,38 +576,6 @@ value(time(Key, percentage, Stat), Data, Percent) :-
     ).
 value(Name, Data, Value) :-
     Value = Data.Name.
-
-%!  predicate_label(+Head, -Label)
-%
-%   Create a human-readable label for the given head
-
-predicate_label(M:H, Label) :-
-    !,
-    functor(H, Name, Arity),
-    (   hidden_module(M, H)
-    ->  atomic_list_concat([Name, /, Arity], Label)
-    ;   atomic_list_concat([M, :, Name, /, Arity], Label)
-    ).
-predicate_label(H, Label) :-
-    !,
-    functor(H, Name, Arity),
-    atomic_list_concat([Name, /, Arity], Label).
-
-hidden_module(system, _).
-hidden_module(user, _).
-hidden_module(M, H) :-
-    predicate_property(system:H, imported_from(M)).
-
-%!  predicate_functor_name(+Head, -Name)
-%
-%   Return the (module-free) name of the predicate for sorting
-%   purposes.
-
-predicate_functor_name(_:H, Name) :-
-    !,
-    predicate_functor_name(H, Name).
-predicate_functor_name(H, Name) :-
-    functor(H, Name, _Arity).
 
 
                  /*******************************

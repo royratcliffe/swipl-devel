@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  2006-2019, University of Amsterdam
+    Copyright (c)  2006-2020, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -68,21 +68,28 @@
             xref_used_class/2,          % ?Source, ?ClassName
             xref_defined_class/3        % ?Source, ?ClassName, -How
           ]).
-:- use_module(library(lists), [append/3, append/2, member/2, select/3]).
-:- use_module(library(operators), [push_op/3]).
-:- use_module(library(shlib), [current_foreign_library/2]).
-:- use_module(library(ordsets)).
-:- use_module(library(prolog_source)).
-:- use_module(library(option)).
-:- use_module(library(error)).
-:- use_module(library(apply)).
-:- use_module(library(debug)).
+:- autoload(library(apply),[maplist/2,partition/4,maplist/3]).
+:- autoload(library(debug),[debug/3]).
+:- autoload(library(dialect),[expects_dialect/1]).
+:- autoload(library(error),[must_be/2,instantiation_error/1]).
+:- autoload(library(lists),[member/2,append/2,append/3,select/3]).
+:- autoload(library(modules),[in_temporary_module/3]).
+:- autoload(library(operators),[push_op/3]).
+:- autoload(library(option),[option/2,option/3]).
+:- autoload(library(ordsets),[ord_intersect/2,ord_intersection/3]).
+:- autoload(library(prolog_source),
+	    [ prolog_canonical_source/2,
+	      prolog_open_source/2,
+	      prolog_close_source/1,
+	      prolog_read_source_term/4
+	    ]).
+:- autoload(library(shlib),[current_foreign_library/2]).
+:- autoload(library(solution_sequences),[distinct/2,limit/2]).
+
 :- if(exists_source(library(pldoc))).
 :- use_module(library(pldoc), []).      % Must be loaded before doc_process
 :- use_module(library(pldoc/doc_process)).
 :- endif.
-:- use_module(library(solution_sequences)).
-:- use_module(library(modules)).
 
 :- predicate_options(xref_source/2, 2,
                      [ silent(boolean),
@@ -205,7 +212,8 @@ module defined by `Source`.
     prolog:called_by/2,             % +Goal, -Called
     prolog:meta_goal/2,             % +Goal, -Pattern
     prolog:hook/1,                  % +Callable
-    prolog:generated_predicate/1.   % :PI
+    prolog:generated_predicate/1,   % :PI
+    prolog:no_autoload_module/1.    % Module is not suitable for autoloading.
 
 :- meta_predicate
     prolog:generated_predicate(:).
@@ -744,7 +752,7 @@ collect(Src, File, In, Options) :-
         stream_position_data(line_count, TermPos, Line),
         setup_call_cleanup(
             asserta(source_line(SrcSpec), Ref),
-            catch(process(Expanded, Comments, TermPos, Src, EOF),
+            catch(process(Expanded, Comments, Term, TermPos, Src, EOF),
                   E, print_message(error, E)),
             erase(Ref)),
         EOF == true,
@@ -815,7 +823,7 @@ list_to_conj([H|T], (H,C)) :-
                  *           PROCESS            *
                  *******************************/
 
-%!  process(+Expanded, +Comments, +TermPos, +Src, -EOF) is det.
+%!  process(+Expanded, +Comments, +Term, +TermPos, +Src, -EOF) is det.
 %
 %   Process a source term that has  been   subject  to term expansion as
 %   well as its optional leading structured comments.
@@ -825,21 +833,31 @@ list_to_conj([H|T], (H,C)) :-
 %   @arg EOF is unified with a boolean to indicate whether or not
 %   processing was stopped because `end_of_file` was processed.
 
-process(Expanded, Comments, TermPos, Src, EOF) :-
+process(Expanded, Comments, Term0, TermPos, Src, EOF) :-
     is_list(Expanded),                          % term_expansion into list.
     !,
     (   member(Term, Expanded),
-        process(Term, Src),
+        process(Term, Term0, Src),
         Term == end_of_file
     ->  EOF = true
     ;   EOF = false
     ),
     xref_comments(Comments, TermPos, Src).
-process(end_of_file, _, _, _, true) :-
+process(end_of_file, _, _, _, _, true) :-
     !.
-process(Term, Comments, TermPos, Src, false) :-
-    process(Term, Src),
+process(Term, Comments, Term0, TermPos, Src, false) :-
+    process(Term, Term0, Src),
     xref_comments(Comments, TermPos, Src).
+
+%!  process(+Term, +Term0, +Src) is det.
+
+process(_, Term0, _) :-
+    ignore_raw_term(Term0),
+    !.
+process(Term, _Term0, Src) :-
+    process(Term, Src).
+
+ignore_raw_term((:- predicate_options(_,_,_))).
 
 %!  process(+Term, +Src) is det.
 
@@ -979,6 +997,10 @@ process_directive(List, Src) :-
     process_directive(consult(List), Src).
 process_directive(use_module(File, Import), Src) :-
     process_use_module2(File, Import, Src, false).
+process_directive(autoload(File, Import), Src) :-
+    process_use_module2(File, Import, Src, false).
+process_directive(require(Import), Src) :-
+    process_requires(Import, Src).
 process_directive(expects_dialect(Dialect), Src) :-
     process_directive(use_module(library(dialect/Dialect)), Src),
     expects_dialect(Dialect).
@@ -986,6 +1008,8 @@ process_directive(reexport(File, Import), Src) :-
     process_use_module2(File, Import, Src, true).
 process_directive(reexport(Modules), Src) :-
     process_use_module(Modules, Src, true).
+process_directive(autoload(Modules), Src) :-
+    process_use_module(Modules, Src, false).
 process_directive(use_module(Modules), Src) :-
     process_use_module(Modules, Src, false).
 process_directive(consult(Modules), Src) :-
@@ -1227,6 +1251,7 @@ xref_meta(catch_with_backtrace(A, _, B), [A, B]).
 xref_meta(thread_create(A,_,_), [A]).
 xref_meta(thread_create(A,_),   [A]).
 xref_meta(thread_signal(_,A),   [A]).
+xref_meta(thread_idle(A,_),     [A]).
 xref_meta(thread_at_exit(A),    [A]).
 xref_meta(thread_initialization(A), [A]).
 xref_meta(engine_create(_,A,_), [A]).
@@ -1264,6 +1289,8 @@ xref_meta(offset(_, G),         [G]).
 xref_meta(reset(G,_,_),         [G]).
 xref_meta(prolog_listen(Ev,G),  [G+N]) :- event_xargs(Ev, N).
 xref_meta(prolog_listen(Ev,G,_),[G+N]) :- event_xargs(Ev, N).
+xref_meta(tnot(G),		[G]).
+xref_meta(not_exists(G),	[G]).
 
                                         % XPCE meta-predicates
 xref_meta(pce_global(_, new(_)), _) :- !, fail.
@@ -1742,6 +1769,7 @@ process_use_module(library(pce), Src, Reexport) :-     % bit special
     forall(member(Import, Exports),
            process_pce_import(Import, Src, Path, Reexport)).
 process_use_module(File, Src, Reexport) :-
+    load_module_if_needed(File),
     (   xoption(Src, silent(Silent))
     ->  Extra = [silent(Silent)]
     ;   Extra = [silent(true)]
@@ -1784,6 +1812,7 @@ process_pce_import(op(P,T,N), Src, _, _) :-
 %   Process use_module/2 and reexport/2.
 
 process_use_module2(File, Import, Src, Reexport) :-
+    load_module_if_needed(File),
     (   xref_source_file(File, Path, Src)
     ->  assert(uses_file(File, Src, Path)),
         (   catch(public_list(Path, _, Meta, Export, _Public, []), _, fail)
@@ -1795,6 +1824,61 @@ process_use_module2(File, Import, Src, Reexport) :-
         ;   true
         )
     ;   assert(uses_file(File, Src, '<not_found>'))
+    ).
+
+
+%!  load_module_if_needed(+File)
+%
+%   Load a module explicitly if  it   is  not  suitable for autoloading.
+%   Typically this is the case  if   the  module provides essential term
+%   and/or goal expansion rulses.
+
+load_module_if_needed(File) :-
+    prolog:no_autoload_module(File),
+    !,
+    use_module(File, []).
+load_module_if_needed(_).
+
+prolog:no_autoload_module(library(apply_macros)).
+prolog:no_autoload_module(library(arithmetic)).
+prolog:no_autoload_module(library(record)).
+prolog:no_autoload_module(library(persistency)).
+prolog:no_autoload_module(library(pldoc)).
+prolog:no_autoload_module(library(settings)).
+
+
+%!  process_requires(+Import, +Src)
+
+process_requires(Import, Src) :-
+    is_list(Import),
+    !,
+    require_list(Import, Src).
+process_requires(Var, _Src) :-
+    var(Var),
+    !.
+process_requires((A,B), Src) :-
+    !,
+    process_requires(A, Src),
+    process_requires(B, Src).
+process_requires(PI, Src) :-
+    requires(PI, Src).
+
+require_list([], _).
+require_list([H|T], Src) :-
+    requires(H, Src),
+    require_list(T, Src).
+
+requires(PI, _Src) :-
+    '$pi_head'(PI, Head),
+    '$get_predicate_attribute'(system:Head, defined, 1),
+    !.
+requires(PI, Src) :-
+    '$pi_head'(PI, Head),
+    '$pi_head'(Name/Arity, Head),
+    '$find_library'(_Module, Name, Arity, _LoadModule, Library),
+    (   imported(Head, Src, Library)
+    ->  true
+    ;   assertz(imported(Head, Src, Library))
     ).
 
 

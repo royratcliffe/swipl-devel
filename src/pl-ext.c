@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam
+    Copyright (c)  1985-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -115,8 +115,6 @@ static const PL_extension foreigns[] = {
 
   FRG("abolish",		1, pl_abolish1,		     META|ISO),
   FRG("abolish",		2, pl_abolish,		     META),
-  FRG("nth_clause",		3, pl_nth_clause,       NDET|META|CREF),
-  FRG("retractall",		1, pl_retractall,	 META|ISO),
 #ifdef O_MAINTENANCE
   FRG("$list_generations",	1, pl_list_generations,	     META),
   FRG("$check_procedure",	1, pl_check_procedure,	     META),
@@ -124,7 +122,6 @@ static const PL_extension foreigns[] = {
 
   FRG("$c_current_predicate",	2, pl_current_predicate,  NDET|META),
   FRG("current_predicate",	1, pl_current_predicate1, NDET|META|ISO),
-  FRG("$get_predicate_attribute", 3, pl_get_predicate_attribute,META),
   FRG("$require",		1, pl_require,		     META),
 
   FRG("repeat",			0, pl_repeat,		 NDET|ISO),
@@ -204,6 +201,21 @@ static const PL_extension foreigns[] = {
   /* DO NOT ADD ENTRIES BELOW THIS ONE */
   FRG((char *)NULL,		0, (Func)NULL,			0)
 };
+
+
+#define SIGNATURE_SEED (0x1a3be34a)
+
+static unsigned int
+predicate_signature(const Definition def)
+{ char str[256];
+
+  Ssprintf(str, "%s/%d/%d",
+	   stringAtom(def->functor->name),
+	   (int)def->functor->arity,
+	   def->flags);
+
+  return MurmurHashAligned2(str, strlen(str), SIGNATURE_SEED);
+}
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -326,6 +338,9 @@ registerBuiltins(const PL_extension *f)
 
       def->impl.foreign.function = f->function;
       createForeignSupervisor(def, f->function);
+
+      if ( !extensions_loaded )
+	GD->foreign.signature ^= predicate_signature(def);
     } else
     { assert(0);
     }
@@ -515,6 +530,7 @@ initBuildIns(void)
   PL_meta_predicate(PL_predicate("thread_create",    3, "system"), "0?+");
   PL_meta_predicate(PL_predicate("thread_signal",    2, "system"), "+0");
 #endif
+  PL_meta_predicate(PL_predicate("thread_idle",      2, "system"), "0+");
   PL_meta_predicate(PL_predicate("prolog_frame_attribute", 3, "system"), "++:");
   PL_meta_predicate(PL_predicate("compile_predicates", 1, "system"), ":");
   PL_meta_predicate(PL_predicate("op",		     3, "system"), "++:");

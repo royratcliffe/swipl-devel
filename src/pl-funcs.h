@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam,
+    Copyright (c)  1985-2020, University of Amsterdam,
                               VU University Amsterdam,
 			      CWI, Amsterdam
     All rights reserved.
@@ -88,6 +88,7 @@ COMMON(int)		createForeignSupervisor(Definition def, Func f);
 COMMON(int)		createUndefSupervisor(Definition def);
 COMMON(Code)		createSupervisor(Definition def);
 COMMON(int)		setSupervisor(Definition def);
+COMMON(size_t)		sizeof_supervisor(Code base);
 COMMON(size_t)		supervisorLength(Code base);
 COMMON(void)		initSupervisors(void);
 
@@ -104,85 +105,14 @@ COMMON(void)		markAtom(atom_t a);
 COMMON(foreign_t)	pl_garbage_collect_atoms(void);
 COMMON(void)		resetAtoms(void);
 COMMON(int)		checkAtoms_src(const char *file, int line);
+COMMON(int)		is_volatile_atom(atom_t a);
 #ifdef O_DEBUG_ATOMGC
 COMMON(word)		pl_track_atom(term_t which, term_t stream);
-COMMON(void)		_PL_debug_register_atom(atom_t a,
-					const char *file, int line,
-					const char *func);
-COMMON(void)		_PL_debug_unregister_atom(atom_t a,
-					  const char *file, int line,
-					  const char *func);
 #endif
-
-
-/* pl-arith.c */
-
-COMMON(int)		ar_compare(Number n1, Number n2, int what);
-COMMON(int)		ar_compare_eq(Number n1, Number n2);
-COMMON(int)		pl_ar_add(Number n1, Number n2, Number r);
-COMMON(int)		ar_mul(Number n1, Number n2, Number r);
-COMMON(word)		pl_current_arithmetic_function(term_t f, control_t h);
-COMMON(void)		initArith(void);
-COMMON(void)		cleanupArith(void);
-COMMON(int)		indexArithFunction(functor_t fdef);
-COMMON(functor_t)	functorArithFunction(unsigned int n);
-COMMON(bool)		ar_func_n(int findex, int argc ARG_LD);
-COMMON(int)		ar_add_ui(Number n, intptr_t add);
-COMMON(int)		valueExpression(term_t p, Number n ARG_LD);
-COMMON(int)		toIntegerNumber(Number n, int flags);
-COMMON(int)		arithChar(Word p ARG_LD);
-COMMON(int)		getCharExpression(Word p, Number r ARG_LD);
-COMMON(Number)		growArithStack(ARG1_LD);
-COMMON(void)		freeArithLocalData(PL_local_data_t *ld);
-COMMON(int)		ar_sign_i(Number n1);
-COMMON(int)		ar_signbit(Number n1);
-COMMON(int)		check_float(double f);
-COMMON(int)		PL_eval_expression_to_int64_ex(term_t t, int64_t *val);
+COMMON(size_t)		atom_space(void);
 
 /* pl-bag.c */
 COMMON(void)		markAtomsFindall(PL_local_data_t *ld);
-
-/* pl-comp.c */
-COMMON(void)		initWamTable(void);
-COMMON(void)		freeVarDefs(PL_local_data_t *ld);
-COMMON(int)		get_head_and_body_clause(term_t clause,
-					 term_t head, term_t body,
-					 Module *m ARG_LD);
-COMMON(Procedure)	lookupBodyProcedure(functor_t functor, Module tm);
-COMMON(int)		compileClause(Clause *cp, Word head, Word body,
-				      Procedure proc, Module module,
-				      term_t warnings ARG_LD);
-COMMON(Clause)		assert_term(term_t term, ClauseRef where, atom_t owner,
-				    SourceLoc loc ARG_LD);
-COMMON(void)		forAtomsInClause(Clause clause, void (func)(atom_t a));
-COMMON(Code)		stepDynPC(Code PC, const code_info *ci);
-COMMON(bool)		decompileHead(Clause clause, term_t head);
-COMMON(Code)		skipArgs(Code PC, int skip);
-COMMON(int)		argKey(Code PC, int skip, word *key);
-COMMON(int)		arg1Key(Code PC, word *key);
-COMMON(bool)		decompile(Clause clause, term_t term, term_t bindings);
-COMMON(word)		pl_nth_clause(term_t p, term_t n, term_t ref,
-				      control_t h);
-COMMON(void)		wamListClause(Clause clause);
-COMMON(Code)		wamListInstruction(IOSTREAM *out, Code relto, Code bp);
-COMMON(int)		unify_definition(Module ctx, term_t head, Definition def,
-					 term_t thehead, int flags);
-COMMON(code)		replacedBreak(Code PC);
-COMMON(code)		replacedBreakUnlocked(Code PC);
-COMMON(int)		clearBreakPointsClause(Clause clause) WUNUSED;
-COMMON(int)		unify_functor(term_t t, functor_t fd, int how);
-COMMON(void)		vm_list(Code code);
-COMMON(Module)		clauseBodyContext(const Clause cl);
-
-/* pl-dump.c */
-COMMON(word)		saveProgram(term_t new);
-COMMON(word)		pl_save_program(term_t new, term_t args);
-COMMON(word)		pl_save(term_t file, term_t restore);
-COMMON(word)		pl_restore(term_t file);
-COMMON(word)		parseSaveProgramOptions(term_t args,
-			int *local, int *global, int *trail, int *argument,
-			char **goal, char **toplevel, char **init_file,
-			bool *tty, bool *standalone);
 
 /* pl-index.c */
 COMMON(word)		getIndexOfTerm(term_t t);
@@ -194,7 +124,7 @@ COMMON(int)		addClauseToIndexes(Definition def, Clause cl,
 					   ClauseRef where);
 COMMON(void)		delClauseFromIndex(Definition def, Clause cl);
 COMMON(void)		cleanClauseIndexes(Definition def, ClauseList cl,
-					   gen_t active);
+					   DirtyDefInfo ddi, gen_t start);
 COMMON(void)		clearTriedIndexes(Definition def);
 COMMON(void)		unallocClauseIndexTable(ClauseIndex ci);
 COMMON(void)		deleteActiveClauseFromIndexes(Definition def, Clause cl);
@@ -203,6 +133,7 @@ COMMON(void)		deleteIndexes(ClauseList cl, int isnew);
 COMMON(int)		checkClauseIndexSizes(Definition def, int nindexable);
 COMMON(void)		checkClauseIndexes(Definition def);
 COMMON(void)		listIndexGenerations(Definition def, gen_t gen);
+COMMON(size_t)		sizeofClauseIndexes(Definition def);
 
 /* pl-dwim.c */
 COMMON(word)		pl_dwim_match(term_t a1, term_t a2, term_t mm);
@@ -314,6 +245,7 @@ COMMON(void)		cleanupFunctors(void);
 COMMON(int)		checkFunctors(void);
 COMMON(word)		pl_current_functor(term_t name, term_t arity,
 					   control_t h);
+COMMON(size_t)		functor_space(void);
 
 /* pl-gc.c */
 COMMON(int)		considerGarbageCollect(Stack s);
@@ -335,11 +267,12 @@ COMMON(void)		clearLocalVariablesFrame(LocalFrame fr);
 COMMON(void)		setLTopInBody(void);
 COMMON(word)		check_foreign(void);	/* DEBUG(CHK_SECURE...) stuff */
 COMMON(void)		markAtomsOnStacks(PL_local_data_t *ld);
-COMMON(void)		set_min_generation(DirtyDefInfo ddi, gen_t gen);
 COMMON(void)		markPredicatesInEnvironments(PL_local_data_t *ld);
 COMMON(QueryFrame)	queryOfFrame(LocalFrame fr);
 COMMON(void)		mark_active_environment(struct bit_vector *active,
 						LocalFrame fr, Code PC);
+COMMON(void)		unmark_stacks(PL_local_data_t *ld,
+				      LocalFrame fr, Choice ch, uintptr_t mask);
 #if defined(O_DEBUG) || defined(SECURE_GC) || defined(O_MAINTENANCE)
 word			checkStacks(void *vm_state);
 COMMON(bool)		scan_global(int marked);
@@ -462,7 +395,9 @@ COMMON(word)		pl_prolog_flag5(term_t key, term_t value,
 					control_t h);
 COMMON(int)		setDoubleQuotes(atom_t a, unsigned int *flagp);
 COMMON(int)		setBackQuotes(atom_t a, unsigned int *flagp);
+COMMON(int)		setRationalSyntax(atom_t a, unsigned int *flagp);
 COMMON(void)		initPrologFlags(void);
+COMMON(void)		setABIVersionPrologFlag(void);
 COMMON(void)		cleanupPrologFlags(void);
 
 /* pl-pro.c */
@@ -524,10 +459,8 @@ COMMON(void)		reconsultFinalizePredicate(sf_reload *rl, Definition def,
 COMMON(void)		destroyDefinition(Definition def);
 COMMON(Procedure)	resolveProcedure__LD(functor_t f, Module module ARG_LD);
 COMMON(Definition)	trapUndefined(Definition undef ARG_LD);
-COMMON(word)		pl_retractall(term_t head);
 COMMON(word)		pl_abolish(term_t atom, term_t arity);
 COMMON(word)		pl_abolish1(term_t pred);
-COMMON(word)		pl_get_predicate_attribute(term_t pred, term_t k, term_t v);
 COMMON(int)		redefineProcedure(Procedure proc, SourceFile sf,
 					  unsigned int suppress);
 COMMON(word)		pl_index(term_t pred);
@@ -543,6 +476,10 @@ COMMON(int)		setDynamicDefinition(Definition def, bool isdyn);
 COMMON(int)		setThreadLocalDefinition(Definition def, bool isdyn);
 COMMON(int)		setAttrDefinition(Definition def, unsigned attr, int val);
 COMMON(int)		PL_meta_predicate(predicate_t def, const char*);
+COMMON(void)		ddi_add_access_gen(DirtyDefInfo ddi, gen_t access);
+COMMON(int)		ddi_contains_gen(DirtyDefInfo ddi, gen_t access);
+COMMON(int)		ddi_is_garbage(DirtyDefInfo ddi, gen_t start, Clause cl);
+COMMON(size_t)		sizeof_predicate(Definition def);
 
 /* pl-srcfile.c */
 
@@ -556,7 +493,6 @@ COMMON(void)		unlinkSourceFileModule(SourceFile sf, Module m);
 COMMON(void)		addProcedureSourceFile(SourceFile sf, Procedure proc);
 COMMON(int)		hasProcedureSourceFile(SourceFile sf, Procedure proc);
 COMMON(int)		reloadHasClauses(SourceFile sf, Procedure proc ARG_LD);
-COMMON(int)		isDefinedProcedureSource(Procedure proc);
 COMMON(ClauseRef)	assertProcedureSource(SourceFile sf, Procedure proc,
 					      Clause clause ARG_LD);
 COMMON(int)		setAttrProcedureSource(SourceFile sf, Procedure proc,
@@ -578,7 +514,7 @@ COMMON(int)		atom_varnameW(const pl_wchar_t *s, size_t len);
 COMMON(int)		atom_is_named_var(atom_t name);
 COMMON(strnumstat)	str_number(const unsigned char *string,
 				   unsigned char **end,
-				   Number value, bool escape);
+				   Number value, int flags);
 COMMON(const char *)	str_number_error(strnumstat rc);
 COMMON(word)		pl_raw_read(term_t term);
 COMMON(word)		pl_raw_read2(term_t stream, term_t term);
@@ -634,9 +570,6 @@ COMMON(void)		freePrologLocalData(PL_local_data_t *ld);
 COMMON(int)		ensure_room_stack(Stack s, size_t n, int ex);
 COMMON(int)		trim_stack(Stack s);
 COMMON(int)		set_stack_limit(size_t limit);
-COMMON(void *)		stack_malloc(size_t size);
-COMMON(void *)		stack_realloc(void *old, size_t size);
-COMMON(void)		stack_free(void *mem);
 COMMON(const char *)	signal_name(int sig);
 
 /* pl-sys.c */

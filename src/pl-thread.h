@@ -52,6 +52,9 @@
 #define GCREQUEST_CGC   0x02
 #define GCREQUEST_ABORT 0x04
 
+#define EXIT_REQ_PROCESS 1
+#define EXIT_REQ_THREAD  2
+
 typedef enum
 { LDATA_IDLE = 0,
   LDATA_SIGNALLED,
@@ -207,9 +210,10 @@ extern counting_mutex _PL_mutexes[];	/* Prolog mutexes */
 #define L_INIT_ATOMS   24
 #define L_CGCGEN       25
 #define L_EVHOOK       26
+#define L_OSDIR	       27
 #ifdef __WINDOWS__
-#define L_DDE	       27
-#define L_CSTACK       28
+#define L_DDE	       28
+#define L_CSTACK       29
 #endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -459,22 +463,21 @@ typedef struct
   int (*function)();			/* function to generate */
 } tprop;
 
-COMMON(int)	get_prop_def(term_t t, atom_t expected,
-			     const tprop *list, const tprop **def);
-
-COMMON(void)	initPrologThreads(void);
-COMMON(int)	pl_atom_table_in_use(AtomTable atom_table);
-COMMON(int)	pl_atom_bucket_in_use(Atom *atom_bucket);
-COMMON(Atom**)	pl_atom_buckets_in_use(void);
+COMMON(int)		get_prop_def(term_t t, atom_t expected,
+				     const tprop *list, const tprop **def);
+COMMON(void)		initPrologThreads(void);
+COMMON(int)		pl_atom_table_in_use(AtomTable atom_table);
+COMMON(int)		pl_atom_bucket_in_use(Atom *atom_bucket);
+COMMON(Atom**)		pl_atom_buckets_in_use(void);
 COMMON(Definition*)	predicates_in_use(void);
-COMMON(int)	pl_functor_table_in_use(FunctorTable functor_table);
-COMMON(int)	pl_kvs_in_use(KVS kvs);
-COMMON(gen_t)	pushPredicateAccess__LD(Definition def ARG_LD);
-COMMON(void)	popPredicateAccess__LD(Definition def ARG_LD);
-COMMON(size_t)	popNPredicateAccess__LD(size_t n ARG_LD);
-COMMON(void)	markAccessedPredicates(PL_local_data_t *ld);
-COMMON(int)     cgc_thread_stats(cgc_stats *stats ARG_LD);
-COMMON(int)	signalGCThread(int sig);
-COMMON(int)	isSignalledGCThread(int sig ARG_LD);
+COMMON(int)		pl_functor_table_in_use(FunctorTable functor_table);
+COMMON(int)		pl_kvs_in_use(KVS kvs);
+COMMON(definition_ref*) pushPredicateAccessObj(Definition def ARG_LD);
+COMMON(void)		popPredicateAccess__LD(Definition def ARG_LD);
+COMMON(size_t)		popNPredicateAccess__LD(size_t n ARG_LD);
+COMMON(void)		markAccessedPredicates(PL_local_data_t *ld);
+COMMON(int)		cgc_thread_stats(cgc_stats *stats ARG_LD);
+COMMON(int)		signalGCThread(int sig);
+COMMON(int)		isSignalledGCThread(int sig ARG_LD);
 
 #endif /*PL_THREAD_H_DEFINED*/

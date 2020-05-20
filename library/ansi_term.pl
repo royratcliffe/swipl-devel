@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2010-2019, VU University Amsterdam
+    Copyright (c)  2010-2020, VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
 
@@ -37,9 +37,12 @@
           [ ansi_format/3,              % +Attr, +Format, +Args
             ansi_get_color/2            % +Which, -rgb(R,G,B)
           ]).
-:- use_module(library(apply)).
-:- use_module(library(lists)).
-:- use_module(library(error)).
+:- autoload(library(error),[domain_error/2,must_be/2]).
+:- autoload(library(lists),[append/2,append/3]).
+:- if(exists_source(library(time))).
+:- autoload(library(time),[call_with_time_limit/2]).
+:- endif.
+
 
 /** <module> Print decorated text to ANSI consoles
 
@@ -132,27 +135,37 @@ ansi_format(Stream, Class, Format, Args) :-
     current_prolog_flag(color_term, true),
     !,
     class_attrs(Class, Attr),
-    (   is_list(Attr)
-    ->  maplist(sgr_code_ex, Attr, Codes0),
-        flatten(Codes0, Codes),
-        atomic_list_concat(Codes, ;, Code)
-    ;   sgr_code_ex(Attr, Code0),
-        (   is_list(Code0)
-        ->  atomic_list_concat(Code0, ;, Code)
-        ;   Code = Code0
-        )
-    ),
+    phrase(sgr_codes_ex(Attr), Codes),
+    atomic_list_concat(Codes, ;, Code),
     format(string(Fmt), '\e[~~wm~w\e[0m', [Format]),
     format(Stream, Fmt, [Code|Args]),
     flush_output.
 ansi_format(Stream, _Attr, Format, Args) :-
     format(Stream, Format, Args).
 
-sgr_code_ex(Attr, Code) :-
-    sgr_code(Attr, Code),
+sgr_codes_ex(X) -->
+    { var(X),
+      !,
+      instantiation_error(X)
+    }.
+sgr_codes_ex([]) -->
     !.
-sgr_code_ex(Attr, _) :-
-    domain_error(sgr_code, Attr).
+sgr_codes_ex([H|T]) -->
+    !,
+    sgr_codes_ex(H),
+    sgr_codes_ex(T).
+sgr_codes_ex(Attr) -->
+    (   { sgr_code(Attr, Code) }
+    ->  (   { is_list(Code) }
+        ->  list(Code)
+        ;   [Code]
+        )
+    ;   { domain_error(sgr_code, Attr) }
+    ).
+
+list([]) --> [].
+list([H|T]) --> [H], list(T).
+
 
 %!  sgr_code(+Name, -Code)
 %
@@ -341,7 +354,7 @@ prolog:message_line_element(S, begin(Level, Ctx)) :-
     current_prolog_flag(color_term, true),
     !,
     (   is_list(Attr)
-    ->  maplist(sgr_code, Attr, Codes),
+    ->  sgr_codes(Attr, Codes),
         atomic_list_concat(Codes, ;, Code)
     ;   sgr_code(Attr, Code)
     ),
@@ -351,6 +364,11 @@ prolog:message_line_element(S, end(Ctx)) :-
     nonvar(Ctx),
     Ctx = ansi(Reset, _),
     keep_line_pos(S, write(S, Reset)).
+
+sgr_codes([], []).
+sgr_codes([H0|T0], [H|T]) :-
+    sgr_code(H0, H),
+    sgr_codes(T0, T).
 
 level_attrs(Level,         Attrs) :-
     user:message_property(Level, color(Attrs)),
@@ -397,6 +415,7 @@ keep_line_pos(_, G) :-
 %   integers in the range 0..65535.
 
 
+:- if(current_predicate(call_with_time_limit/2)).
 ansi_get_color(Which0, RGB) :-
     stream_property(user_input, tty(true)),
     stream_property(user_output, tty(true)),
@@ -479,6 +498,12 @@ echo([]).
 echo([H|T]) :-
     put_code(user_output, H),
     echo(T).
+
+:- else.
+ansi_get_color(_Which0, _RGB) :-
+    fail.
+:- endif.
+
 
 
 :- multifile prolog:message//1.

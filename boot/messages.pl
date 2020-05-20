@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2019, University of Amsterdam
+    Copyright (c)  1997-2020, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -44,6 +44,7 @@
     prolog:message//1,              % entire message
     prolog:error_message//1,        % 1-st argument of error term
     prolog:message_context//1,      % Context of error messages
+    prolog:deprecated//1,	    % Deprecated features
     prolog:message_location//1,     % (File) location of error messages
     prolog:message_line_element/2.  % Extend printing
 :- discontiguous
@@ -89,9 +90,11 @@ translate_message2(Term) -->
 translate_message2(Term) -->
     prolog_message(Term).
 translate_message2(error(resource_error(stack), Context)) -->
+    !,
     out_of_stack(Context).
-translate_message2(error(resource_error(Missing), _)) -->
-    [ 'Not enough resources: ~w'-[Missing] ].
+translate_message2(error(resource_error(tripwire(Wire, Context)), _)) -->
+    !,
+    tripwire_message(Wire, Context).
 translate_message2(error(ISO, SWI)) -->
     swi_location(SWI),
     term_message(ISO),
@@ -121,6 +124,8 @@ term_message(Term) -->
 term_message(Term) -->
     [ 'Unknown error term: ~p'-[Term] ].
 
+iso_message(resource_error(Missing)) -->
+    [ 'Not enough resources: ~w'-[Missing] ].
 iso_message(type_error(evaluable, Actual)) -->
     { callable(Actual) },
     [ 'Arithmetic: `~p'' is not a function'-[Actual] ].
@@ -229,7 +234,7 @@ unknown_proc_msg(Proc) -->
     ).
 
 faq(Page) -->
-    [nl, '  See FAQ at http://www.swi-prolog.org/FAQ/', Page, '.txt' ].
+    [nl, '  See FAQ at https://www.swi-prolog.org/FAQ/', Page, '.txt' ].
 
 type_error_comment(_Expected, Actual) -->
     { type_of(Actual, Type),
@@ -433,6 +438,8 @@ swi_location(stream(Stream, Line, LinePos, CharNo)) -->
     ->  swi_location(file(File, Line, LinePos, CharNo))
     ;   [ 'Stream ~w:~d:~d '-[Stream, Line, LinePos] ]
     ).
+swi_location(autoload(File:Line)) -->
+    [ '~w:~w: '-[File, Line] ].
 swi_location(_) -->
     [].
 
@@ -581,7 +588,7 @@ prolog_message(unknown_in_module_user) -->
     [ 'Using a non-error value for unknown in the global module', nl,
       'causes most of the development environment to stop working.', nl,
       'Please use :- dynamic or limit usage of unknown to a module.', nl,
-      'See http://www.swi-prolog.org/howto/database.html'
+      'See https://www.swi-prolog.org/howto/database.html'
     ].
 prolog_message(deprecated(What)) -->
     deprecated(What).
@@ -929,6 +936,30 @@ prolog_message(autoload(Pred, File)) -->
     [ 'autoloading ~p from ~w'-[Pred, File] ].
 prolog_message(autoload(read_index(Dir))) -->
     [ 'Loading autoload index for ~w'-[Dir] ].
+prolog_message(autoload(disabled(Loaded))) -->
+    [ 'Disabled autoloading (loaded ~D files)'-[Loaded] ].
+prolog_message(autoload(already_defined(PI, From))) -->
+    [ ansi(code, '~p', [PI]) ],
+    (   { '$pi_head'(PI, Head),
+          predicate_property(Head, built_in)
+        }
+    ->  [' is a built-in predicate']
+    ;   [ ' is already imported from module ',
+          ansi(code, '~p', [From])
+        ]
+    ).
+
+swi_message(autoload(Msg)) -->
+    [ nl, '  ' ],
+    autoload_message(Msg).
+
+autoload_message(not_exported(PI, Spec, _FullFile, _Exports)) -->
+    [ ansi(code, '~w', [Spec]),
+      ' does not export ',
+      ansi(code, '~p', [PI])
+    ].
+autoload_message(no_file(Spec)) -->
+    [ ansi(code, '~p', [Spec]), ': No such file' ].
 
 
                  /*******************************
@@ -1047,7 +1078,7 @@ prolog_message(user_versions) -->
     ;   []
     ).
 prolog_message(documentaton) -->
-    [ 'For online help and background, visit http://www.swi-prolog.org', nl,
+    [ 'For online help and background, visit https://www.swi-prolog.org', nl,
       'For built-in help, use ?- help(Topic). or ?- apropos(Word).'
     ].
 prolog_message(welcome) -->
@@ -1254,8 +1285,15 @@ delays(_, _Options) -->
 
 list_clauses([]).
 list_clauses([H|T]) :-
-    portray_clause(user_output, H, [indent(4)]),
+    (   system_undefined(H)
+    ->  true
+    ;   portray_clause(user_output, H, [indent(4)])
+    ),
     list_clauses(T).
+
+system_undefined((undefined :- tnot(undefined))).
+system_undefined((answer_count_restraint :- tnot(answer_count_restraint))).
+system_undefined((radial_restraint :- tnot(radial_restraint))).
 
 bind_res_sep(_, []) --> !.
 bind_res_sep(_, []-[]) --> !.
@@ -1523,16 +1561,47 @@ prolog_message(invalid_tmp_dir(Dir, Reason)) -->
     [ 'Cannot use ~p as temporary file directory: ~w'-[Dir, Reason] ].
 prolog_message(ambiguous_stream_pair(Pair)) -->
     [ 'Ambiguous operation on stream pair ~p'-[Pair] ].
-
+prolog_message(backcomp(init_file_moved(FoundFile))) -->
+    { absolute_file_name(app_config('init.pl'), InitFile,
+                         [ file_errors(fail)
+                         ])
+    },
+    [ 'The location of the config file has moved'-[], nl,
+      '  from "~w"'-[FoundFile], nl,
+      '  to   "~w"'-[InitFile], nl,
+      '  See https://www.swi-prolog.org/modified/config-files.html'-[]
+    ].
 
 		 /*******************************
 		 *          DEPRECATED		*
 		 *******************************/
 
+deprecated(Term) -->
+    prolog:deprecated(Term),
+    !.
 deprecated(set_prolog_stack(_Stack,limit)) -->
     [ 'set_prolog_stack/2: limit(Size) sets the combined limit.'-[], nl,
-      'See http://www.swi-prolog.org/changes/stack-limit.html'
+      'See https://www.swi-prolog.org/changes/stack-limit.html'
     ].
+
+		 /*******************************
+		 *           TRIPWIRES		*
+		 *******************************/
+
+tripwire_message(Wire, Context) -->
+    [ 'Trapped tripwire ~w for '-[Wire] ],
+    tripwire_context(Wire, Context).
+
+tripwire_context(_, ATrie) -->
+    { '$is_answer_trie'(ATrie),
+      !,
+      '$tabling':atrie_goal(ATrie, QGoal),
+      user_predicate_indicator(QGoal, Goal)
+    },
+    [ '~p'-[Goal] ].
+tripwire_context(_, Ctx) -->
+    [ '~p'-[Ctx] ].
+
 
 		 /*******************************
 		 *        DEFAULT THEME		*
@@ -1583,6 +1652,35 @@ default_theme(message(Level),         Attrs) :-
 %   system.
 
 print_message(Level, Term) :-
+    setup_call_cleanup(
+        push_msg(Term),
+        print_message_guarded(Level, Term),
+        pop_msg),
+    !.
+print_message(Level, Term) :-
+    (   Level \== silent
+    ->  format(user_error, 'Recursive ~w message: ~q~n', [Level, Term])
+    ;   true
+    ).
+
+push_msg(Term) :-
+    nb_current('$inprint_message', Messages),
+    !,
+    \+ ( '$member'(Msg, Messages),
+         Msg =@= Term
+       ),
+    b_setval('$inprint_message', [Term|Messages]).
+push_msg(Term) :-
+    b_setval('$inprint_message', [Term]).
+
+pop_msg :-
+    (   nb_current('$inprint_message', [_|Messages]),
+        Messages \== []
+    ->  b_setval('$inprint_message', Messages)
+    ;   nb_delete('$inprint_message')
+    ).
+
+print_message_guarded(Level, Term) :-
     (   must_print(Level, Term)
     ->  (   translate_message(Term, Lines, [])
         ->  (   nonvar(Term),
@@ -1843,15 +1941,20 @@ actions_to_format([nl|T], Fmt, Args) :-
     !,
     actions_to_format(T, Fmt0, Args),
     atom_concat('~n', Fmt0, Fmt).
-actions_to_format([Skip|T], Fmt, Args) :-
-    action_skip(Skip),
+actions_to_format([ansi(_Attrs, Fmt0, Args0)|Tail], Fmt, Args) :-
     !,
-    actions_to_format(T, Fmt, Args).
+    actions_to_format(Tail, Fmt1, Args1),
+    atom_concat(Fmt0, Fmt1, Fmt),
+    append_args(Args0, Args1, Args).
 actions_to_format([Fmt0-Args0|Tail], Fmt, Args) :-
     !,
     actions_to_format(Tail, Fmt1, Args1),
     atom_concat(Fmt0, Fmt1, Fmt),
     append_args(Args0, Args1, Args).
+actions_to_format([Skip|T], Fmt, Args) :-
+    action_skip(Skip),
+    !,
+    actions_to_format(T, Fmt, Args).
 actions_to_format([Term|Tail], Fmt, Args) :-
     atomic(Term),
     !,
@@ -1864,7 +1967,6 @@ actions_to_format([Term|Tail], Fmt, Args) :-
 
 action_skip(at_same_line).
 action_skip(flush).
-action_skip(ansi(_Attrs, _Fmt, _Args)).
 action_skip(begin(_Level, _Ctx)).
 action_skip(end(_Ctx)).
 

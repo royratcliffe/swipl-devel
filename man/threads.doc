@@ -201,6 +201,11 @@ system exceptions into readable messages.
 The thread is terminated on thread_exit/1 using the argument \arg{Term}.
 \end{description}
 
+    \predicate{thread_alias}{1}{+Alias}
+Set the alias name of the calling thread to \arg{Alias}.  An error is
+raised if the calling thread already has an alias or \arg{Alias} is
+in use for a thread or message queue.
+
     \predicate{thread_detach}{1}{+Id}
 Switch thread into detached state (see \term{detached}{Bool} option at
 thread_create/3) at runtime.  \arg{Id} is the identifier of the thread
@@ -355,6 +360,12 @@ If the thread is an engine (see \chapref{engines}), \arg{Boolean} is
 If the thread is an engine that is currently attached to a thread,
 \arg{ThreadId} is the thread that executes the engine.
 
+	\termitem{size}{Bytes}
+The amount of memory associated with this thread. This includes the
+thread structure, its stacks, its default message queue, its clauses
+in its thread local dynamic predicates (see thread_local/1) and memory
+used for representing thread-local answer tries (see \secref{tabling}).
+
 	\termitem{system_thread_id}{Integer}
 Thread identifier used by the operating system for the calling thread.
 Not available on all OSes. This is the same as the Prolog flag
@@ -385,7 +396,8 @@ Print usage statistics on internal mutexes and mutexes associated with
 dynamic predicates. For each mutex two numbers are printed: the number
 of times the mutex was acquired and the number of \jargon{collisions}:
 the number of times the calling thread has to wait for the mutex.
-Generally collision count is close to zero on single-CPU hardware.
+The output is written to \const{current_output} and can thus be
+redirected using with_output_to/2.
 \end{description}
 
 
@@ -473,6 +485,25 @@ in its queue and continues execution using \arg{A}~=~\const{gnat}.
    <thread 2>
    thread_send_message(Thread_1, b(gnu)),
    thread_send_message(Thread_1, a(gnat)),
+\end{code}
+
+\arg{Term} may contain attributed variables (see \secref{clp}), in which
+case only terms for which the constraints successfully execute are
+returned. Handle constraints applies for all predicates that extract
+terms from message queues. For example, we can get the even numbers from
+a queue using this code:
+
+\begin{code}
+get_matching_messages(Queue, Pattern, [H|T]) :-
+    copy_term(Pattern, H),
+    thread_get_message(Queue, H, [timeout(0)]),
+    !,
+    get_matching_messages(Queue, Pattern, T).
+get_matching_messages(_, _, []).
+
+even_numbers(Q, List) :-
+    freeze(Even, Even mod 2 =:= 0),
+    get_matching_messages(Q, Even, List).
 \end{code}
 
 See also thread_peek_message/1.

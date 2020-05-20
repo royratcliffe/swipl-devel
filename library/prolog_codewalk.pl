@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2016, VU University Amsterdam
+    Copyright (c)  2012-2020, VU University Amsterdam
+                              CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -36,12 +37,19 @@
           [ prolog_walk_code/1,         % +Options
             prolog_program_clause/2     % -ClauseRef, +Options
           ]).
-:- use_module(library(option)).
-:- use_module(library(record)).
-:- use_module(library(debug)).
-:- use_module(library(apply)).
-:- use_module(library(lists)).
-:- use_module(library(prolog_metainference)).
+:- use_module(library(record),[(record)/1, op(_,_,record)]).
+
+:- autoload(library(apply),[maplist/2]).
+:- autoload(library(debug),[debug/3,debugging/1,assertion/1]).
+:- autoload(library(error),[must_be/2]).
+:- autoload(library(listing),[portray_clause/1]).
+:- autoload(library(lists),[member/2,nth1/3,append/3]).
+:- autoload(library(option),[meta_options/3]).
+:- autoload(library(prolog_clause),
+	    [clause_info/4,initialization_layout/4,clause_name/2]).
+:- autoload(library(prolog_metainference),
+	    [inferred_meta_predicate/2,infer_meta_predicate/2]).
+
 
 /** <module> Prolog code walker
 
@@ -91,6 +99,7 @@ source file is passed into _Where.
                                                 test,development]))),
                        source(boolean),
                        trace_reference(any),
+                       trace_condition(callable),
                        on_trace(callable),
                        infer_meta_predicates(oneof([false,true,all])),
                        evaluate(boolean),
@@ -107,6 +116,7 @@ source file is passed into _Where.
                 infer_meta_predicates:oneof([false,true,all])=true,
                 clauses:list,               % Walk only these clauses
                 trace_reference:any=(-),
+                trace_condition:callable,   % Call-back condition
                 on_trace:callable,          % Call-back on trace hits
                                             % private stuff
                 clause,                     % Processed clause
@@ -168,6 +178,23 @@ source file is passed into _Where.
 %     represented as Module:Callable (i.e., they are always
 %     qualified).  See also subsumes_term/2.
 %
+%     * trace_condition(:Cond)
+%     Additional filter condition applied after `trace_reference`.
+%     Called as call(Cond, Callee, Context), where `Context` is a
+%     dict containing the following keys:
+%
+%       - Context:caller
+%         Qualified term representing the caller or the atom
+%         '<initialization>'.
+%       - Context:module
+%         Module being processed
+%       - Context:clause
+%         If we are processing a normal clause, the clause reference
+%         to this clause.
+%       - Context:initialization
+%         If we are processing an initialization/1 directive, a term
+%         `File:Line` representing the location of the declaration.
+%
 %     * on_trace(:OnTrace)
 %     If a reference to =trace_reference= is found, call
 %     call(OnTrace, Callee, Caller, Location), where Location is one
@@ -227,7 +254,7 @@ prolog_walk_code(Iteration, Options) :-
     ).
 
 is_meta(on_trace).
-
+is_meta(trace_condition).
 
 %!  walk_clauses(+Clauses, +OTerm) is det.
 %
@@ -252,9 +279,15 @@ walk_clauses(Clauses, OTerm) :-
 %   True if we must scan Module according to OTerm.
 
 scan_module(M, OTerm) :-
+    walk_option_module(OTerm, M1),
+    nonvar(M1),
+    !,
+    \+ M \= M1.
+scan_module(M, OTerm) :-
     walk_option_module_class(OTerm, Classes),
     module_property(M, class(Class)),
-    memberchk(Class, Classes).
+    memberchk(Class, Classes),
+    !.
 
 %!  walk_from_initialization(+OTerm)
 %
@@ -277,7 +310,8 @@ init_goal_in_scope(Goal, SourceLocation, OTerm) :-
     ;   walk_option_module_class(OTerm, Classes),
         source_file_property(File, module(MF))
     ->  module_property(MF, class(Class)),
-        memberchk(Class, Classes)
+        memberchk(Class, Classes),
+        walk_option_module(OTerm, MF)
     ;   true
     ).
 
@@ -295,6 +329,7 @@ walk_from_initialization(_, _).
 
 find_walk_from_module(M, OTerm) :-
     debug(autoload, 'Analysing module ~q', [M]),
+    walk_option_module(OTerm, M),
     forall(predicate_in_module(M, PI),
            walk_called_by_pred(M:PI, OTerm)).
 
@@ -498,6 +533,7 @@ walk_called(Goal, Module, TermPos, OTerm) :-
     ;   predicate_property(Module:Goal, imported_from(M2)),
         subsumes_term(To, M2:Goal)
     ),
+    trace_condition(M2:Goal, TermPos, OTerm),
     print_reference(M2:Goal, TermPos, trace, OTerm),
     fail.                                   % Continue search
 walk_called(Goal, Module, _, OTerm) :-
@@ -551,6 +587,29 @@ walk_called(Goal, Module, TermPos, OTerm) :-
     undefined(Module:Goal, TermPos, OTerm).
 walk_called(Goal, _Module, TermPos, OTerm) :-
     not_callable(Goal, TermPos, OTerm).
+
+%!  trace_condition(:Callee, +TermPos, +OTerm) is semidet.
+%
+%   Call call(Condition, Callee, Dict)
+
+trace_condition(Callee, TermPos, OTerm) :-
+    walk_option_trace_condition(OTerm, Cond), nonvar(Cond),
+    !,
+    cond_location_context(OTerm, TermPos, Context0),
+    walk_option_caller(OTerm, Caller),
+    walk_option_module(OTerm, Module),
+    put_dict(#{caller:Caller, module:Module}, Context0, Context),
+    call(Cond, Callee, Context).
+trace_condition(_, _, _).
+
+cond_location_context(OTerm, _TermPos, Context) :-
+    walk_option_clause(OTerm, Clause), nonvar(Clause),
+    !,
+    Context = #{clause:Clause}.
+cond_location_context(OTerm, _TermPos, Context) :-
+    walk_option_initialization(OTerm, Init), nonvar(Init),
+    !,
+    Context = #{initialization:Init}.
 
 %!  undecided(+Variable, +TermPos, +OTerm)
 
@@ -878,6 +937,8 @@ walk_dcg_body(G, M, TermPos, OTerm) :-
 :- meta_predicate
     subterm_pos(+, +, 2, +, -),
     sublist_pos(+, +, +, +, 2, -).
+:- public
+    subterm_pos/5.                      % used in library(check).
 
 subterm_pos(_, _, _, Pos, _) :-
     var(Pos), !, fail.
@@ -979,8 +1040,13 @@ variants([H|T], V, List) :-
 predicate_in_module(Module, PI) :-
     current_predicate(Module:PI),
     PI = Name/Arity,
+    \+ hidden_predicate(Name, Arity),
     functor(Head, Name, Arity),
     \+ predicate_property(Module:Head, imported_from(_)).
+
+
+hidden_predicate(Name, _) :-
+    sub_atom(Name, 0, _, _, '$wrap$').
 
 
                  /*******************************

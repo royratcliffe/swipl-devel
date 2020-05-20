@@ -43,12 +43,15 @@
             order_by/2,                 % +Spec, :Goal
             group_by/4                  % +By, +Template, :Goal, -Bag
           ]).
-:- use_module(library(nb_set)).
-:- use_module(library(error)).
-:- use_module(library(apply)).
-:- use_module(library(lists)).
-:- use_module(library(ordsets)).
-:- use_module(library(option)).
+:- autoload(library(apply),[maplist/3]).
+:- autoload(library(error),
+	    [domain_error/2,must_be/2,instantiation_error/1]).
+:- autoload(library(lists),[reverse/2,member/2]).
+:- autoload(library(nb_set),
+	    [empty_nb_set/1,add_nb_set/3,size_nb_set/2]).
+:- autoload(library(option),[option/3]).
+:- autoload(library(ordsets),[ord_subtract/3]).
+
 
 /** <module> Modify solution sequences
 
@@ -195,8 +198,8 @@ reduced_(State, Witness1, SizeLimit) :-
 %   at most Count solutions. Solutions are  returned as soon as they
 %   become  available.
 %
-%   @arg is either `inifinite`,  making   this  predicate  equivalent to
-%   call/1  or  an  integer.  If  `Count   <  1`  this  predicate  fails
+%   @arg Count is either `infinite`, making this predicate equivalent to
+%   call/1 or an  integer.  If  _|Count   <  1|_  this  predicate  fails
 %   immediately.
 
 limit(Count, Goal) :-
@@ -268,15 +271,17 @@ call_nth(_Goal, Bad) :-
 
 %!  order_by(+Spec, :Goal)
 %
-%   Order solutions according to Spec.  Spec   is  a  list of terms,
-%   where each element is one of. The  ordering of solutions of Goal
-%   that only differ in variables that are _not_ shared with Spec is
-%   not changed.
+%   Order solutions according to Spec. Spec is   a  list of terms, where
+%   each element is one of. The ordering  of solutions of Goal that only
+%   differ in variables that are _not_ shared with Spec is not changed.
 %
 %     - asc(Term)
 %     Order solution according to ascending Term
 %     - desc(Term)
 %     Order solution according to descending Term
+%
+%   This predicate is based on findall/3 and (thus) variables in answers
+%   are _copied_.
 
 order_by(Spec, Goal) :-
     must_be(list, Spec),

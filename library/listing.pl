@@ -42,15 +42,17 @@
           portray_clause/2,             % +Stream, +Clause
           portray_clause/3              % +Stream, +Clause, +Options
         ]).
-:- use_module(library(lists)).
-:- use_module(library(apply)).
-:- use_module(library(settings)).
-:- use_module(library(option)).
-:- use_module(library(error)).
-:- use_module(library(debug)).
-:- use_module(library(ansi_term)).
-:- use_module(library(prolog_clause)).
-:- set_prolog_flag(generate_debug_info, false).
+:- use_module(library(settings),[setting/4,setting/2]).
+
+:- autoload(library(ansi_term),[ansi_format/3]).
+:- autoload(library(apply),[foldl/4]).
+:- autoload(library(debug),[debug/3]).
+:- autoload(library(error),[instantiation_error/1,must_be/2]).
+:- autoload(library(lists),[member/2]).
+:- autoload(library(option),[option/2,option/3,meta_options/3]).
+:- autoload(library(prolog_clause),[clause_info/5]).
+
+%:- set_prolog_flag(generate_debug_info, false).
 
 :- module_transparent
     listing/0.
@@ -59,7 +61,10 @@
     listing(:, +),
     portray_clause(+,+,:).
 
-:- predicate_options(portray_clause/3, 3, [pass_to(system:write_term/3, 3)]).
+:- predicate_options(portray_clause/3, 3,
+                     [ indent(nonneg),
+                       pass_to(system:write_term/3, 3)
+                     ]).
 
 :- multifile
     prolog:locate_clauses/2.        % +Spec, -ClauseRefList
@@ -305,7 +310,7 @@ declaration(Pred, Source, Decl) :-
     ->  decl_term(Pred, Source, Funct),
         table_options(Pred, Funct, TableDecl),
         Decl = table(TableDecl)
-    ;   comment('% tabled using answer subsumption', []),
+    ;   comment('% tabled using answer subsumption~n', []),
         fail                                    % TBD
     ).
 declaration(Pred, Source, Decl) :-
@@ -658,23 +663,17 @@ do_portray_clause(Out, Term, Options) :-
         portray_body(Body, BodyIndent, indent, RightPri, Out, Options)
     ),
     full_stop(Out).
-do_portray_clause(Out, (:-use_module(File, Imports)), Options) :-
-    length(Imports, Len),
-    Len > 3,
+do_portray_clause(Out, (:-Directive), Options) :-
+    wrapped_list_directive(Directive),
     !,
+    Directive =.. [Name, Arg, List],
     option(indent(LeftMargin), Options, 0),
     indent(Out, LeftMargin),
-    ListIndent is LeftMargin+14,
-    format(Out, ':- use_module(~q,', [File]),
-    portray_list(Imports, ListIndent, Out, Options),
-    write(Out, ').\n').
-do_portray_clause(Out, (:-module(Module, Exports)), Options) :-
-    !,
-    option(indent(LeftMargin), Options, 0),
-    indent(Out, LeftMargin),
-    ModuleIndent is LeftMargin+10,
-    format(Out, ':- module(~q,', [Module]),
-    portray_list(Exports, ModuleIndent, Out, Options),
+    format(Out, ':- ~q(', [Name]),
+    line_position(Out, Indent),
+    format(Out, '~q,', [Arg]),
+    nlindent(Out, Indent),
+    portray_list(List, Indent, Out, Options),
     write(Out, ').\n').
 do_portray_clause(Out, (:-Directive), Options) :-
     !,
@@ -697,6 +696,9 @@ full_stop(Out) :-
     '$put_token'(Out, '.'),
     nl(Out).
 
+wrapped_list_directive(module(_,_)).
+%wrapped_list_directive(use_module(_,_)).
+%wrapped_list_directive(autoload(_,_)).
 
 %!  portray_body(+Term, +Indent, +DoIndent, +Priority, +Out, +Options)
 %
@@ -954,7 +956,6 @@ portray_list([], _, Out, _) :-
     !,
     write(Out, []).
 portray_list(List, Indent, Out, Options) :-
-    nlindent(Out, Indent),
     write(Out, '[ '),
     EIndent is Indent + 2,
     portray_list_elements(List, EIndent, Out, Options),

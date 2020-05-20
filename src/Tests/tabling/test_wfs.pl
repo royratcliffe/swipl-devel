@@ -45,6 +45,7 @@ test_wfs :-
 		  ]).
 
 :- begin_tests(wfs_delays).
+:- use_module(library(dialect/xsb)).
 
 :- table p/0, q/0, a/1.
 
@@ -54,6 +55,12 @@ p :- tnot(q).
 q :- tnot(p).
 
 a(true).
+
+:- table puas(_,lattice(join(_X,_Y,_Z))).
+join(X,Y,Z) :- Z is max(X,Y).
+
+puas(1,X) :-
+    not_exists(puas(1,X)).
 
 test(delays, D == q) :-
     call_delays(q, D).
@@ -67,6 +74,9 @@ test(delays, D == test_wfs:mp) :-
     call_delays(mp, D).
 test(residual, D == [(q:-tnot(p)),(p:-tnot(q))]) :-
     call_residual_program(q, D).
+test(as, D =@= [(puas(1,_) :- tnot(tabled_call(plunit_wfs_delays:puas(1,B)))),
+		(tabled_call(plunit_wfs_delays:puas(1,B)):-puas(1,B))]) :-
+    call_residual_program(puas(1,_), D).
 
 :- end_tests(wfs_delays).
 

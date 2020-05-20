@@ -34,6 +34,7 @@
 */
 
 #include "pl-incl.h"
+#include "pl-comp.h"
 #include "os/pl-ctype.h"
 #include "os/pl-cstack.h"
 #include "pl-inline.h"
@@ -209,14 +210,20 @@ isDebugFrame(LocalFrame FR)
 }
 
 
-static void
-exitFromDebugger(int status)
-{
+static int
+exitFromDebugger(const char *msg, int status)
+{ GET_LD
+
 #ifdef O_PLMT
   if ( PL_thread_self() > 1 )
-    pthread_exit(NULL);
+  { Sfprintf(Sdout, "%sexit session\n", msg);
+    LD->exit_requested = EXIT_REQ_THREAD;
+    return ACTION_ABORT;
+  }
 #endif
+  Sfprintf(Sdout, "%sexit (status 4)\n", msg);
   PL_halt(status);
+  return -1;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -474,15 +481,15 @@ again:
     if ( !truePrologFlag(PLFLAG_TTY_CONTROL) )
     { buf[0] = EOS;
       if ( !readLine(Sdin, Sdout, buf) )
-      { Sfprintf(Sdout, "EOF: exit (status 4)\n");
-	exitFromDebugger(4);
+      { action = exitFromDebugger("EOF: ", 4);
+	goto out;
       }
     } else
     { int c = getSingleChar(Sdin, FALSE);
 
       if ( c == EOF )
-      { Sfprintf(Sdout, "EOF: exit (status 4)\n");
-	exitFromDebugger(4);
+      { action = exitFromDebugger("EOF: ", 4);
+	goto out;
       }
       buf[0] = c;
       buf[1] = EOS;
@@ -671,8 +678,7 @@ traceAction(char *cmd, int port, LocalFrame frame, Choice bfr,
 		  clear(frame, FR_SKIPPED);
 		return ACTION_CONTINUE;
     case '\04': FeedBack("EOF: ");
-    case 'e':	FeedBack("exit (status 4)\n");
-		exitFromDebugger(4);
+    case 'e':	return exitFromDebugger("", 4);
     case 'f':	FeedBack("fail\n");
 		return ACTION_FAIL;
     case 'i':	if (port & (CALL_PORT|REDO_PORT|FAIL_PORT))
@@ -996,7 +1002,7 @@ messageToString(term_t msg)
 
     PL_put_term(av+0, msg);
     rc = (PL_call_predicate(MODULE_system, PL_Q_NODEBUG, pred, av) &&
-	  PL_get_chars(av+1, &s, CVT_ALL|BUF_RING));
+	  PL_get_chars(av+1, &s, CVT_ALL|BUF_STACK));
     PL_discard_foreign_frame(fid);
 
     return rc ? s : (char*)NULL;
@@ -1657,6 +1663,7 @@ again:
 
   switch(c)
   { case 'a':	Sfprintf(Sdout, "abort\n");
+    action_a:
 		unblockSignal(sig);
 		abortProlog();
 		if ( !safe )
@@ -1681,8 +1688,8 @@ again:
 		break;
     case 04:
     case EOF:	Sfprintf(Sdout, "EOF: ");
-    case 'e':	Sfprintf(Sdout, "exit (status 4)\n");
-		exitFromDebugger(4);
+    case 'e':	if ( exitFromDebugger("", 4) == ACTION_ABORT )
+		  goto action_a;
 		break;
 #ifdef O_DEBUGGER
     case 'g':	Sfprintf(Sdout, "goals\n");
@@ -1739,7 +1746,7 @@ initTracer(void)
 
 #if defined(O_INTERRUPT) && defined(SIGINT)
   if ( truePrologFlag(PLFLAG_SIGNALS) )
-    PL_signal(SIGINT, interruptHandler);
+    PL_signal(SIGINT, PL_interrupt);
 #endif
 
   resetTracer();
@@ -2112,7 +2119,7 @@ prolog_frame_attribute(term_t frame, term_t what, term_t value)
    return PL_unify(value, consTermRef(argFrameP(fr, argn-1)));
   }
 
-  if ( arity != 0 )
+  if ( !(arity == 0 || (arity == 1 && key == ATOM_parent_goal)) )
   { unknown_key:
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_frame_attribute, what);
   }
@@ -2210,35 +2217,61 @@ prolog_frame_attribute(term_t frame, term_t what, term_t value)
   { Procedure proc;
     term_t head = PL_new_term_ref();
     term_t a = PL_new_term_ref();
+    fid_t fid;
 
     if ( !get_procedure(value, &proc, head, GP_FIND) )
       fail;
 
-    while( fr )
-    { while(fr && fr->predicate != proc->definition)
-	fr = parentFrame(fr);
+    if ( (fid = PL_open_foreign_frame()) )
+    { while( fr )
+      { while(fr && fr->predicate != proc->definition)
+	  fr = parentFrame(fr);
 
-      if ( fr )
-      { term_t fref = consTermRef(fr);
-	int i, arity = fr->predicate->functor->arity;
+	if ( fr )
+	{ int i, garity = fr->predicate->functor->arity;
+	  term_t fref = consTermRef(fr);
 
-	for(i=0; i<arity; i++)
-	{ term_t fa;
+	  for(i=0; i<garity; i++)
+	  { term_t fa;
 
-	  fr = (LocalFrame)valTermRef(fref);
-	  fa = consTermRef(argFrameP(fr, i));
+	    fa = consTermRef(argFrameP(fr, i));
 
-	  _PL_get_arg(i+1, head, a);
-	  if ( !PL_unify(a, fa) )
-	    break;
+	    _PL_get_arg(i+1, head, a);
+	    if ( !PL_unify(a, fa) )
+	      break;
+	    fr = (LocalFrame)valTermRef(fref);	/* deal with possible shift */
+	  }
+	  if ( i == garity )
+	  { if ( arity == 1 )
+	    { LocalFrame parent;
+	      term_t arg = PL_new_term_ref();
+
+	      _PL_get_arg(1, what, arg);
+	      if ( (parent = parentFrame(fr)) )
+	      { if ( PL_unify_frame(arg, parent) )
+		  return TRUE;
+	      } else
+	      { if ( PL_unify_atom(arg, ATOM_none) )
+		  return TRUE;
+	      }
+	    } else
+	    { return TRUE;
+	    }
+	  }
+
+	  if ( PL_exception(0) )
+	  { return FALSE;
+	  } else
+	  { PL_rewind_foreign_frame(fid);
+
+	    fr = (LocalFrame)valTermRef(fref);	/* deal with possible shift */
+	    fr = parentFrame(fr);
+	  }
+	} else
+	{ PL_close_foreign_frame(fid);
+	  return FALSE;
 	}
-        if ( i == arity )
-	  succeed;
-	fr = (LocalFrame)valTermRef(fref);
-      } else
-	fail;
-
-      fr = parentFrame(fr);
+      }
     }
   } else if ( key == ATOM_pc )
   { if ( fr->programPointer &&

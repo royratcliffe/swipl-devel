@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam
+    Copyright (c)  1985-2020, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
@@ -42,7 +42,6 @@
             (nospy)/1,
             nospyall/0,
             debugging/0,
-            rational/3,
             flag/3,
             atom_prefix/2,
             dwim_match/2,
@@ -50,6 +49,10 @@
             source_file/1,
             source_file/2,
             unload_file/1,
+            exists_source/1,                    % +Spec
+            exists_source/2,                    % +Spec, -Path
+            use_foreign_library/1,		% :FileSpec
+            use_foreign_library/2,		% :FileSpec, +Install
             prolog_load_context/2,
             stream_position_data/3,
             current_predicate/2,
@@ -75,7 +78,6 @@
             prolog_stack_property/2,
             absolute_file_name/2,
             tmp_file_stream/3,                  % +Enc, -File, -Stream
-            require/1,
             call_with_depth_limit/3,            % :Goal, +Limit, -Result
             call_with_inference_limit/3,        % :Goal, +Limit, -Result
             numbervars/3,                       % +Term, +Start, -End
@@ -89,7 +91,9 @@
           ]).
 
 :- meta_predicate
-    dynamic(:, +).
+    dynamic(:, +),
+    use_foreign_library(:),
+    use_foreign_library(:, +).
 
 
                 /********************************
@@ -314,25 +318,6 @@ update_flag(Name, Old, New) :-
     ).
 
 
-                 /*******************************
-                 *            RATIONAL          *
-                 *******************************/
-
-%!  rational(+Rat, -Numerator, -Denominator) is semidet.
-%
-%   True when Rat is a  rational   number  with  given Numerator and
-%   Denominator.
-
-rational(Rat, M, N) :-
-    rational(Rat),
-    (   Rat = rdiv(M, N)
-    ->  true
-    ;   integer(Rat)
-    ->  M = Rat,
-        N = 1
-    ).
-
-
                 /********************************
                 *             ATOMS             *
                 *********************************/
@@ -491,6 +476,31 @@ canonical_source_file(Spec, File) :-
     source_file(File).
 
 
+%!  exists_source(+Source) is semidet.
+%!  exists_source(+Source, -Path) is semidet.
+%
+%   True if Source (a term  valid   for  load_files/2) exists. Fails
+%   without error if this is not the case. The predicate is intended
+%   to be used with  :-  if,  as   in  the  example  below. See also
+%   source_exports/2.
+%
+%   ```
+%   :- if(exists_source(library(error))).
+%   :- use_module_library(error).
+%   :- endif.
+%   ```
+
+exists_source(Source) :-
+    exists_source(Source, _Path).
+
+exists_source(Source, Path) :-
+    absolute_file_name(Source, Path,
+                       [ file_type(prolog),
+                         access(read),
+                         file_errors(fail)
+                       ]).
+
+
 %!  prolog_load_context(+Key, -Value)
 %
 %   Provides context information for  term_expansion and directives.
@@ -558,6 +568,42 @@ unload_file(File) :-
         retractall(system:'$resolved_source_path'(_, Path))
     ;   true
     ).
+
+		 /*******************************
+		 *      FOREIGN LIBRARIES	*
+		 *******************************/
+
+%!  use_foreign_library(+FileSpec) is det.
+%!  use_foreign_library(+FileSpec, +Entry:atom) is det.
+%
+%   Load and install a foreign   library as load_foreign_library/1,2
+%   and register the installation using   initialization/2  with the
+%   option =now=. This is similar to using:
+%
+%     ==
+%     :- initialization(load_foreign_library(foreign(mylib))).
+%     ==
+%
+%   but using the initialization/1 wrapper causes  the library to be
+%   loaded _after_ loading of  the  file   in  which  it  appears is
+%   completed,  while  use_foreign_library/1  loads    the   library
+%   _immediately_. I.e. the  difference  is   only  relevant  if the
+%   remainder of the file uses functionality of the C-library.
+
+use_foreign_library(FileSpec) :-
+    ensure_shlib,
+    initialization(shlib:load_foreign_library(FileSpec), now).
+
+use_foreign_library(FileSpec, Entry) :-
+    ensure_shlib,
+    initialization(shlib:load_foreign_library(FileSpec, Entry), now).
+
+ensure_shlib :-
+    '$get_predicate_attribute'(shlib:load_foreign_library(_), defined, 1),
+    '$get_predicate_attribute'(shlib:load_foreign_library(_,_), defined, 1),
+    !.
+ensure_shlib :-
+    use_module(library(shlib), []).
 
 
                  /*******************************
@@ -669,7 +715,7 @@ current_predicate(Name, Module:Head) :-
     '$defined_predicate'(DefModule:Head),
     !.
 current_predicate(Name, Module:Head) :-
-    current_prolog_flag(autoload, true),
+    '$autoload':autoload_in(Module, general),
     \+ current_prolog_flag(Module:unknown, fail),
     (   compound(Head)
     ->  compound_name_arity(Head, Name, Arity)
@@ -726,17 +772,10 @@ property_predicate(undefined, Pred) :-
 property_predicate(visible, Pred) :-
     !,
     visible_predicate(Pred).
-property_predicate(autoload(File), _:Head) :-
+property_predicate(autoload(File), Head) :-
     !,
-    current_prolog_flag(autoload, true),
-    (   callable(Head)
-    ->  goal_name_arity(Head, Name, Arity),
-        (   '$find_library'(_, Name, Arity, _, File)
-        ->  true
-        )
-    ;   '$in_library'(Name, Arity, File),
-        functor(Head, Name, Arity)
-    ).
+    \+ current_prolog_flag(autoload, false),
+    '$autoload':autoloadable(Head, File).
 property_predicate(implementation_module(IM), M:Head) :-
     !,
     atom(M),
@@ -758,6 +797,12 @@ property_predicate(iso, _:Head) :-
     goal_name_arity(Head, Name, Arity),
     current_predicate(system:Name/Arity),
     '$predicate_property'(iso, system:Head).
+property_predicate(built_in, Module:Head) :-
+    callable(Head),
+    !,
+    goal_name_arity(Head, Name, Arity),
+    current_predicate(Module:Name/Arity),
+    '$predicate_property'(built_in, Module:Head).
 property_predicate(Property, Pred) :-
     define_or_generate(Pred),
     '$predicate_property'(Property, Pred).
@@ -853,8 +898,10 @@ define_or_generate(Pred) :-
     table_flag(Flag, Pred).
 '$predicate_property'(incremental, Pred) :-
     '$get_predicate_attribute'(Pred, incremental, 1).
-'$predicate_property'(abstract(0), Pred) :-
-    '$get_predicate_attribute'(Pred, abstract, 1).
+'$predicate_property'(abstract(N), Pred) :-
+    '$get_predicate_attribute'(Pred, abstract, N).
+'$predicate_property'(size(Bytes), Pred) :-
+    '$get_predicate_attribute'(Pred, size, Bytes).
 
 system_undefined(user:prolog_trace_interception/4).
 system_undefined(user:prolog_exception_hook/4).
@@ -871,6 +918,12 @@ table_flag(shared, Pred) :-
     '$get_predicate_attribute'(Pred, tshared, 1).
 table_flag(incremental, Pred) :-
     '$get_predicate_attribute'(Pred, incremental, 1).
+table_flag(subgoal_abstract(N), Pred) :-
+    '$get_predicate_attribute'(Pred, subgoal_abstract, N).
+table_flag(answer_abstract(N), Pred) :-
+    '$get_predicate_attribute'(Pred, subgoal_abstract, N).
+table_flag(subgoal_abstract(N), Pred) :-
+    '$get_predicate_attribute'(Pred, max_answers, N).
 
 
 %!  visible_predicate(:Head) is nondet.
@@ -1015,37 +1068,6 @@ opt_prop(volatile,      boolean,               true,  volatile).
 opt_prop(thread,        oneof(atom, [local,shared],[local,shared]),
                                                local, thread_local).
 
-
-                 /*******************************
-                 *             REQUIRE          *
-                 *******************************/
-
-:- meta_predicate
-    require(:).
-
-%!  require(:ListOfPredIndicators) is det.
-%
-%   Tag given predicates as undefined, so they will be included
-%   into a saved state through the autoloader.
-%
-%   @see autoload/0.
-
-require(M:List) :-
-    (   is_list(List)
-    ->  require(List, M)
-    ;   throw(error(type_error(list, List), _))
-    ).
-
-require([], _).
-require([N/A|T], M) :-
-    !,
-    functor(Head, N, A),
-    '$require'(M:Head),
-    require(T, M).
-require([H|_T], _) :-
-    throw(error(type_error(predicate_indicator, H), _)).
-
-
                 /********************************
                 *            MODULES            *
                 *********************************/
@@ -1094,8 +1116,7 @@ module_property(Module, Property) :-
 property_module(Property, Module) :-
     module_property(Property),
     (   Property = exported_operators(List)
-    ->  '$exported_ops'(Module, List, []),
-        List \== []
+    ->  '$exported_ops'(Module, List, [])
     ;   '$module_property'(Module, Property)
     ).
 
@@ -1104,6 +1125,7 @@ module_property(file(_)).
 module_property(line_count(_)).
 module_property(exports(_)).
 module_property(exported_operators(_)).
+module_property(size(_)).
 module_property(program_size(_)).
 module_property(program_space(_)).
 module_property(last_modified_generation(_)).
@@ -1152,15 +1174,33 @@ current_trie(Trie) :-
 %   are:
 %
 %     - value_count(Count)
-%     Number of terms in the trie.
+%       Number of terms in the trie.
 %     - node_count(Count)
-%     Number of nodes in the trie.
+%       Number of nodes in the trie.
 %     - size(Bytes)
-%     Number of bytes needed to store the trie.
+%       Number of bytes needed to store the trie.
 %     - hashed(Count)
-%     Number of hashed nodes.
+%       Number of hashed nodes.
 %     - compiled_size(Bytes)
-%     Size of the compiled representation (if the trie is compiled)
+%       Size of the compiled representation (if the trie is compiled)
+%     - lookup_count(Count)
+%       Number of data lookups on the trie
+%     - gen_call_count(Count)
+%       Number of trie_gen/2 calls on this trie
+%
+%   Incremental tabling statistics:
+%
+%     - invalidated(Count)
+%       Number of times the trie was inivalidated
+%     - reevaluated(Count)
+%       Number of times the trie was re-evaluated
+%
+%   Shared tabling statistics:
+%
+%     - deadlock(Count)
+%       Number of times the table was involved in a deadlock
+%     - wait(Count)
+%       Number of times a thread had to wait for this table
 
 trie_property(Trie, Property) :-
     current_trie(Trie),
@@ -1175,8 +1215,13 @@ trie_property(compiled_size(_)).
                                                 % below only when -DO_TRIE_STATS
 trie_property(lookup_count(_)).                 % is enabled in pl-trie.h
 trie_property(gen_call_count(_)).
-trie_property(invalidated(_)).
+trie_property(invalidated(_)).                  % IDG stats
 trie_property(reevaluated(_)).
+trie_property(deadlock(_)).                     % Shared tabling stats
+trie_property(wait(_)).
+trie_property(idg_affected_count(_)).
+trie_property(idg_dependent_count(_)).
+trie_property(idg_size(_)).
 
 
                 /********************************
@@ -1482,27 +1527,16 @@ set_prolog_gc_thread(Status) :-
 
 '$wrap_predicate'(M:Head, WName, Closure, call(Wrapped), Body) :-
     callable_name_arguments(Head, PName, Args),
-    distinct_vars(Args, Head, Arity),
+    callable_name_arity(Head, PName, Arity),
+    (   is_most_general_term(Head)
+    ->  true
+    ;   '$domain_error'(most_general_term, Head)
+    ),
     atomic_list_concat(['$wrap$', PName], WrapName),
     volatile(M:WrapName/Arity),
+    module_transparent(M:WrapName/Arity),
     WHead =.. [WrapName|Args],
     '$c_wrap_predicate'(M:Head, WName, Closure, Wrapped, M:(WHead :- Body)).
-
-distinct_vars(Vars, _, Arity) :-
-    all_vars(Vars),
-    sort(Vars, Sorted),
-    length(Vars, Arity),
-    length(Sorted, Arity),
-    !.
-distinct_vars(_, Head, _) :-
-    '$domain_error'('most_general_term', Head).
-
-all_vars([]).
-all_vars([H|T]) :-
-    (   var(H)
-    ->  all_vars(T)
-    ;   '$uninstantiation_error'(H)
-    ).
 
 callable_name_arguments(Head, PName, Args) :-
     atom(Head),
@@ -1511,3 +1545,11 @@ callable_name_arguments(Head, PName, Args) :-
     Args = [].
 callable_name_arguments(Head, PName, Args) :-
     compound_name_arguments(Head, PName, Args).
+
+callable_name_arity(Head, PName, Arity) :-
+    atom(Head),
+    !,
+    PName = Head,
+    Arity = 0.
+callable_name_arity(Head, PName, Arity) :-
+    compound_name_arity(Head, PName, Arity).

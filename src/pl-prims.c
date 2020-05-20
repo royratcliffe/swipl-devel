@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2017, University of Amsterdam
+    Copyright (c)  1985-2020, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -35,6 +36,7 @@
 
 /*#define O_DEBUG 1*/
 #include "pl-incl.h"
+#include "pl-arith.h"
 #include "os/pl-ctype.h"
 #include "pl-inline.h"
 #include <math.h>
@@ -248,7 +250,7 @@ do_unify(Word t1, Word t2 ARG_LD)
     deRef(t1); w1 = *t1;
     deRef(t2); w2 = *t2;
 
-    DEBUG(CHK_SECURE,
+    DEBUG(CHK_ATOM_GARBAGE_COLLECTED,
 	  { assert(w1 != ATOM_garbage_collected);
 	    assert(w2 != ATOM_garbage_collected);
 	  });
@@ -1685,7 +1687,12 @@ compare_primitives(Word p1, Word p2, int eq ARG_LD)
 
 	get_number(w1, &left PASS_LD);
 	get_number(w2, &right PASS_LD);
-	rc = cmpNumbers(&left, &right);
+	if ( left.type == V_FLOAT && isnan(left.value.f) )
+	  rc = CMP_LESS;
+	else if ( right.type == V_FLOAT && isnan(right.value.f) )
+	  rc = CMP_GREATER;
+	else
+	  rc = cmpNumbers(&left, &right);
 	clearNumber(&left);
 	clearNumber(&right);
 
@@ -1707,8 +1714,8 @@ compare_primitives(Word p1, Word p2, int eq ARG_LD)
     { number n1, n2;
       int rc;
 
-      get_integer(w1, &n1);
-      get_integer(w2, &n2);
+      get_rational(w1, &n1);
+      get_rational(w2, &n2);
       if ( eq && (n1.type != n2.type) )
 	return CMP_NOTEQ;
       rc = cmpNumbers(&n1, &n2);
@@ -3151,7 +3158,8 @@ is_most_general_term(Word p ARG_LD)
 	  l = TailList(l);
 	  deRef(l);
 	}
-	p = l;
+
+	l = p;
 	while( isList(*l) )
 	{ Word h = HeadList(l);
 
@@ -3760,25 +3768,21 @@ x_chars(const char *pred, term_t atom, term_t string, int how ARG_LD)
       if ( stext.encoding == ENC_ISO_LATIN_1 )
       { unsigned char *q, *s = (unsigned char *)stext.text.t;
 	number n;
-	AR_CTX;
 
 	if ( (how&X_MASK) == X_NUMBER && !(how&X_NO_LEADING_WHITE) )
 	{ while(*s && isBlank(*s))		/* ISO: number_codes(X, "  42") */
 	    s++;
 	}
 
-	AR_BEGIN();
-	if ( (rc=str_number(s, &q, &n, FALSE)) == NUM_OK )
+	if ( (rc=str_number(s, &q, &n, 0)) == NUM_OK ) /* TBD: rational support? */
 	{ if ( *q == EOS )
 	  { int rc2 = PL_unify_number(atom, &n);
 	    clearNumber(&n);
-	    AR_END();
 	    return rc2;
 	  } else
 	    rc = NUM_ERROR;
 	  clearNumber(&n);
 	}
-	AR_END();
       } else
 	rc = NUM_ERROR;
 
@@ -3978,7 +3982,6 @@ PRED_IMPL("$is_char_list", 2, is_char_list, 0)
 static
 PRED_IMPL("atom_number", 2, atom_number, 0)
 { PRED_LD
-  AR_CTX
   char *s;
   size_t len;
 
@@ -3987,23 +3990,18 @@ PRED_IMPL("atom_number", 2, atom_number, 0)
     unsigned char *q;
     strnumstat rc;
 
-    AR_BEGIN();
-
-    if ( (rc=str_number((unsigned char *)s, &q, &n, FALSE) == NUM_OK) )
+    if ( (rc=str_number((unsigned char *)s, &q, &n, 0) == NUM_OK) ) /* TBD: rational support */
     { if ( *q == EOS )
       { int rc = PL_unify_number(A2, &n);
         clearNumber(&n);
 
-        AR_END();
         return rc;
       } else
       { clearNumber(&n);
-        AR_END();
 	return FALSE;
       }
     } else
-    { AR_END();
-      return FALSE;
+    { return FALSE;
     }
   } else if ( PL_get_nchars(A2, &len, &s, CVT_NUMBER) )
   { return PL_unify_atom_nchars(A1, len, s);
@@ -4379,7 +4377,7 @@ PRED_IMPL("sub_atom_icasechk", 3, sub_atom_icasechk, 0)
   else
     return FALSE;
 
-  if ( PL_get_nchars(needle,   &l1, &needleA, CVT_ALL|BUF_RING) &&
+  if ( PL_get_nchars(needle,   &l1, &needleA, CVT_ALL|BUF_STACK) &&
        PL_get_nchars(haystack, &l2, &haystackA, CVT_ALL) )
   { char *s, *q, *s2 = haystackA + offset;
     const char *eq = (const char *)&needleA[l1];
@@ -4400,7 +4398,7 @@ PRED_IMPL("sub_atom_icasechk", 3, sub_atom_icasechk, 0)
     fail;
   }
 
-  if ( PL_get_wchars(needle,   &l1, &needleW, CVT_ALL|CVT_EXCEPTION|BUF_RING) &&
+  if ( PL_get_wchars(needle,   &l1, &needleW, CVT_ALL|CVT_EXCEPTION|BUF_STACK) &&
        PL_get_wchars(haystack, &l2, &haystackW, CVT_ALL|CVT_EXCEPTION) )
   { pl_wchar_t *s, *q, *s2 = haystackW + offset;
     pl_wchar_t *eq = &needleW[l1];
@@ -4878,7 +4876,7 @@ Moyle, for improving the implementation of a theorem prover.
 
 The implementation of call_with_depth_limit/3 in pl-prims.pl is
 
-================================================================
+```
 call_with_depth_limit(G, Limit, Result) :-
 	$depth_limit(Limit, OLimit, OReached),
 	(   catch(G, E, depth_limit_except(OLimit, OReached, E)),
@@ -4886,7 +4884,7 @@ call_with_depth_limit(G, Limit, Result) :-
 	    Cut
 	;   $depth_limit_false(OLimit, OReached, Result)
 	).
-================================================================
+```
 
 $depth_limit/3 sets the new limit and fetches the old values so they can
 be restored by the other calls.   '$depth_limit_true'/5 restores the old
@@ -5216,14 +5214,15 @@ the `atoms' key that is defined by both and this ambiguous.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static size_t
-heapUsed(void)
-{
-#ifdef HAVE_BOEHM_GC
-  return GC_get_heap_size();
-#else
+programSpace(void)
+{ size_t allocated = heapUsed();
+
+  if ( allocated )
+    return allocated - GD->statistics.stack_space;
+
   return 0;
-#endif
 }
+
 
 static size_t
 CStackSize(PL_local_data_t *ld)
@@ -5305,7 +5304,7 @@ qp_statistics__LD(atom_t key, int64_t v[], PL_local_data_t *ld)
     v[1] = roomStack(trail);
     vn = 2;
   } else if ( key == ATOM_program )
-  { v[0] = heapUsed();
+  { v[0] = programSpace();
     v[1] = 0;
     vn = 2;
   } else if ( key == ATOM_garbage_collection )
@@ -5393,8 +5392,12 @@ swi_statistics__LD(atom_t key, Number v, PL_local_data_t *ld)
     v->value.i = CStackSize(LD);
   else if (key == ATOM_atoms)				/* atoms */
     v->value.i = GD->statistics.atoms;
+  else if (key == ATOM_atom_space)			/* atom_space */
+    v->value.i = atom_space();
   else if (key == ATOM_functors)			/* functors */
     v->value.i = GD->statistics.functors;
+  else if (key == ATOM_functor_space)			/* functor_space */
+    v->value.i = functor_space();
   else if (key == ATOM_predicates)			/* predicates */
     v->value.i = GD->statistics.predicates;
   else if (key == ATOM_clauses)				/* clauses */
@@ -5422,7 +5425,7 @@ swi_statistics__LD(atom_t key, Number v, PL_local_data_t *ld)
     v->value.i = GC_get_gc_no();
 #endif
   else if (key == ATOM_heapused)			/* heap usage */
-    v->value.i = heapUsed();
+    v->value.i = programSpace();
 #ifdef O_ATOMGC
   else if (key == ATOM_agc)
     v->value.i = GD->atoms.gc;
@@ -5470,11 +5473,16 @@ swi_statistics__LD(atom_t key, Number v, PL_local_data_t *ld)
   else if ( key == ATOM_thread_cputime )
   { v->type = V_FLOAT;
     v->value.f = GD->statistics.thread_cputime;
-  }
+  } else if ( key == ATOM_threads_peak )
+    v->value.i = GD->thread.peak_id;
 #endif
   else if (key == ATOM_table_space_used)
-    v->value.i = LD->tabling.node_pool.size*sizeof(trie_node);
-  else if (key == ATOM_indexes_created)
+  { alloc_pool *pool;
+    if ( (pool=LD->tabling.node_pool) )
+      v->value.i = pool->size;
+    else
+      v->value.i = 0;
+  } else if (key == ATOM_indexes_created)
     v->value.i = GD->statistics.indexes.created;
   else if (key == ATOM_indexes_destroyed)
     v->value.i = GD->statistics.indexes.destroyed;
@@ -5688,7 +5696,7 @@ set_pl_option(const char *name, const char *value)
 	  number n;
 	  unsigned char *q;
 
-	  if ( str_number((unsigned char *)value, &q, &n, FALSE) == NUM_OK &&
+	  if ( str_number((unsigned char *)value, &q, &n, 0) == NUM_OK &&
 	       *q == EOS &&
 	       intNumber(&n) )
 	  { *val = (size_t)n.value.i;

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1996-2019, University of Amsterdam
+    Copyright (c)  1996-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -126,7 +126,7 @@ linkVal__LD(Word p ARG_LD)
   if ( unlikely(needsRef(w)) )
     return makeRef(p);
 
-  DEBUG(CHK_SECURE, assert(w != ATOM_garbage_collected));
+  DEBUG(CHK_ATOM_GARBAGE_COLLECTED, assert(w != ATOM_garbage_collected));
 
   return w;
 }
@@ -746,7 +746,7 @@ PL_atom_wchars(atom_t a, size_t *len)
 
     return (const wchar_t *)x->name;
   } else if ( true(x->type, PL_BLOB_TEXT) )
-  { Buffer b = findBuffer(BUF_RING);
+  { Buffer b = findBuffer(BUF_STACK);
     const char *s = (const char*)x->name;
     const char *e = &s[x->length];
 
@@ -1398,7 +1398,7 @@ PL_get_list_nchars(term_t l, size_t *length, char **s, unsigned int flags)
     if ( flags & BUF_MALLOC )
     { *s = PL_malloc(len+1);
       memcpy(*s, r, len+1);
-      unfindBuffer(flags);
+      unfindBuffer(b, flags);
     } else
       *s = r;
 
@@ -1492,7 +1492,7 @@ PL_get_text_as_atom(term_t t, atom_t *a, int flags)
 
 char *
 PL_quote(int chr, const char *s)
-{ Buffer b = findBuffer(BUF_RING);
+{ Buffer b = findBuffer(BUF_STACK);
 
   addBuffer(b, (char)chr, char);
   for(; *s; s++)
@@ -1748,17 +1748,24 @@ PL_get_float(term_t t, double *f)
 
   if ( isFloat(w) )
   { *f = valFloat(w);
-    succeed;
+    return TRUE;
   }
-  if ( isTaggedInt(w) )
-  { *f = (double) valInt(w);
-    succeed;
+  if ( isRational(w) )
+  { number n;
+    int rc;
+
+    get_rational(w, &n);
+    if ( (rc=promoteToFloatNumber(&n)) )
+      *f = n.value.f;
+    else
+      PL_clear_exception();
+
+    clearNumber(&n);
+
+    return rc;
   }
-  if ( isBignum(w) )
-  { *f = (double) valBignum(w);
-    succeed;
-  }
-  fail;
+
+  return FALSE;
 }
 
 
@@ -2217,39 +2224,12 @@ PL_is_float(term_t t)
 }
 
 
-static inline int
-isRational(word w ARG_LD)
-{ if ( isTerm(w) )
-  { Functor f = valueTerm(w);
-
-    if ( f->definition == FUNCTOR_rdiv2 )
-    { Word p;
-
-      deRef2(&f->arguments[0], p);
-      if ( !isInteger(*p) )
-	fail;
-      deRef2(&f->arguments[1], p);
-      if ( !isInteger(*p) )
-	fail;
-      if ( *p == consInt(0) )
-	fail;
-
-      return TRUE;
-    }
-  }
-  if ( isInteger(w) )
-    return TRUE;
-
-  return FALSE;
-}
-
-
 int
 PL_is_rational(term_t t)
 { GET_LD
   word w = valHandle(t);
 
-  return isRational(w PASS_LD);
+  return isRational(w);
 }
 
 
@@ -2331,7 +2311,7 @@ PL_is_pair(term_t t)
 { GET_LD
   word w = valHandle(t);
 
-  return isList(w) ? TRUE : FALSE;
+  return !!isList(w);
 }
 
 
@@ -2339,7 +2319,7 @@ int
 PL_is_atomic__LD(term_t t ARG_LD)
 { word w = valHandle(t);
 
-  return isAtomic(w) ? TRUE : FALSE;
+  return !!isAtomic(w);
 }
 
 
@@ -2349,7 +2329,7 @@ PL_is_atomic(term_t t)
 { GET_LD
   word w = valHandle(t);
 
-  return isAtomic(w) ? TRUE : FALSE;
+  return !!isAtomic(w);
 }
 #define PL_is_atomic(t) PL_is_atomic__LD(t PASS_LD)
 
@@ -2359,11 +2339,7 @@ PL_is_number(term_t t)
 { GET_LD
   word w = valHandle(t);
 
-  if ( isInteger(w) ||
-       isFloat(w) )
-    return TRUE;
-
-  return FALSE;
+  return !!isNumber(w);
 }
 
 
@@ -2373,7 +2349,7 @@ PL_is_string(term_t t)
 { GET_LD
   word w = valHandle(t);
 
-  return isString(w) ? TRUE : FALSE;
+  return !!isString(w);
 }
 
 int
@@ -2640,6 +2616,22 @@ PL_put_int64(term_t t, int64_t i)
 { GET_LD
 
   return PL_put_int64__LD(t, i PASS_LD);
+}
+
+int
+PL_put_uint64(term_t t, uint64_t i)
+{ GET_LD
+  word w;
+  int rc;
+
+  switch ( (rc=put_uint64(&w, i, ALLOW_GC PASS_LD)) )
+  { case TRUE:
+      return setHandle(t, w);
+    case LOCAL_OVERFLOW:
+      return PL_representation_error("uint64_t");
+    default:
+      return raiseStackOverflow(rc);
+  }
 }
 
 
@@ -3854,6 +3846,53 @@ PL_blob_data(atom_t a, size_t *len, PL_blob_t **type)
 
 
 		 /*******************************
+		 *	       DICT		*
+		 *******************************/
+
+int
+PL_put_dict(term_t t, atom_t tag,
+	    size_t len, const atom_t *keys, term_t values)
+{ GET_LD
+  Word p, p0;
+  size_t size = len*2+2;
+
+  if ( (p0=p=allocGlobal(size)) )
+  { *p++ = dict_functor(len);
+    if ( tag )
+    { if ( isAtom(tag) )
+      { *p++ = tag;
+      } else
+      { invalid:
+	gTop -= size;
+	return -1;
+      }
+    } else
+    { setVar(*p++);
+    }
+
+    for(; len-- > 0; keys++, values++)
+    { *p++ = linkVal(valTermRef(values));
+      if ( is_dict_key(*keys) )
+	*p++ = *keys;
+      else
+	goto invalid;
+    }
+
+    if ( dict_order(p0, TRUE PASS_LD) )
+    { setHandle(t, consPtr(p0, TAG_COMPOUND|STG_GLOBAL));
+      DEBUG(CHK_SECURE, checkStacks(NULL));
+      return TRUE;
+    }
+
+    gTop -= size;
+    return -2;
+  }
+
+  return FALSE;
+}
+
+
+		 /*******************************
 		 *	       TYPE		*
 		 *******************************/
 
@@ -3871,6 +3910,9 @@ PL_term_type(term_t t)
       if ( w == ATOM_nil )
 	return PL_NIL;
       return PL_BLOB;
+    }
+    case PL_INTEGER:
+    { return (isInteger(w) ? PL_INTEGER : PL_RATIONAL);
     }
     case PL_TERM:
     { functor_t f = valueTerm(w)->definition;
@@ -4597,6 +4639,10 @@ PL_halt(int status)
   return FALSE;
 }
 
+#ifndef SIGABRT
+#define SIGABRT 6			/* exit 134 --> aborted */
+#endif
+
 void
 PL_abort_process(void)
 { haltProlog(128+SIGABRT);
@@ -4813,7 +4859,7 @@ PL_ttymode(IOSTREAM *s)
   if ( s == Suser_input )
   { if ( !truePrologFlag(PLFLAG_TTY_CONTROL) ) /* -tty in effect */
       return PL_NOTTY;
-    if ( ttymode == TTY_RAW )		/* get_single_char/1 and friends */
+    if ( Sttymode(s) == TTY_RAW )	/* get_single_char/1 and friends */
       return PL_RAWTTY;
     return PL_COOKEDTTY;		/* cooked (readline) input */
   } else
@@ -5300,6 +5346,25 @@ registerForeignLicenses(void)
   }
 
   pre_registered = NULL;
+}
+
+
+		 /*******************************
+		 *	      VERSION		*
+		 *******************************/
+
+unsigned int
+PL_version(int which)
+{ switch(which)
+  { case PL_VERSION_SYSTEM:	return PLVERSION;
+    case PL_VERSION_FLI:	return PL_FLI_VERSION;
+    case PL_VERSION_REC:	return PL_REC_VERSION;
+    case PL_VERSION_QLF:	return PL_QLF_VERSION;
+    case PL_VERSION_QLF_LOAD:	return PL_QLF_LOADVERSION;
+    case PL_VERSION_VM:		return VM_SIGNATURE;
+    case PL_VERSION_BUILT_IN:	return GD->foreign.signature;
+    default:			return 0;
+  }
 }
 
 
