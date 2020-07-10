@@ -75,7 +75,7 @@ explorer.
 Although we strongly advice to put your program in a file, optionally
 edit it and use make/0 to reload it (see \secref{viewprogram}), it is
 possible to manage facts and rules from the terminal. The most
-conveniant way to add a few clauses is by consulting the pseudo file
+convenient way to add a few clauses is by consulting the pseudo file
 \const{user}. The input is ended using the system end-of-file character.
 
 \begin{code}
@@ -102,7 +102,7 @@ with \mbox{\tt X = <value>} if it can prove the goal for a certain
 	\footnote{On most installations, single-character commands are
 		  executed without waiting for the {\sc return} key.}
 if (s)he wants another solution. Use the \textsc{return} key if you do
-not want to see the more answers. Prolog completes the output with a full
+not want to see more answers. Prolog completes the output with a full
 stop (.) if the user uses the \textsc{return} key or Prolog
 \emph{knows} there are no more answers. If Prolog cannot find (more)
 answers, it writes \textbf{false.} Finally, Prolog answers using an
@@ -136,9 +136,9 @@ is started on this location, otherwise the user is presented a choice.
 If a graphical user interface is available, the editor normally creates
 a new window and the system prompts for the next command. The user may
 edit the source file, save it and run make/0 to update any modified
-source file. If the editor cannot be opened in a window it the same
-console and leaving the editor runs make/0 to reload any source files
-that have been modified.
+source file. If the editor cannot be opened in a window, it opens in
+the same console and leaving the editor runs make/0 to reload any
+source files that have been modified.
 
 \begin{code}
 ?- edit(likes).
@@ -152,10 +152,10 @@ true.
 \end{code}
 
 The program can also be \jargon{decompiled} using listing/1 as below.
-The argument is listing/1 is just a predicate name, a predicate
+The argument of listing/1 is just a predicate name, a predicate
 \jargon{indicator} of the form \arg{Name/Arity}, e.g., \exam{?-
 listing(mild/1).} or a \jargon{head}, e.g., \exam{?- listing(likes(sam,
-_).}, listing all \jargon{matching} clauses. The predicate listing/0,
+_)).}, listing all \jargon{matching} clauses. The predicate listing/0,
 i.e., without arguments lists the entire program.\footnote{This lists
 several \jargon{hook} predicates that are defined by default and is
 typically not very informative.}
@@ -326,8 +326,7 @@ Bootstrap compilation.  See \secref{maintoptions}.
     \cmdlineoptionitem{--arch}{}
 When given as the only option, it prints the architecture identifier
 (see Prolog flag \prologflag{arch}) and exits. See also
-\cmdlineoption{-dump-runtime-variables}. Also available as
-\cmdlineoption{-arch}.
+\cmdlineoption{--dump-runtime-variables}.
 
     \cmdlineoptionitem{--dump-runtime-variables}{[=format]}
 When given as the only option, it prints a sequence of variable settings
@@ -346,13 +345,12 @@ compatible format.
 
     \cmdlineoptionitem{--help}{}
 When given as the only option, it summarises the most important options.
-Also available as \cmdlineoption{-h} and \cmdlineoption{-help}.
 
     \cmdlineoptionitem{--version}{}
 When given as the only option, it summarises the version and the
-architecture identifier.  Also available as \cmdlineoption{-v}.
+architecture identifier.
 
-    \cmdlineoptionitem{--abi_version}{}
+    \cmdlineoptionitem{--abi-version}{}
 Print a key (string) that represents the binary compatibility on
 a number of aspects.  See \secref{abi-versions}.
 \end{description}
@@ -361,13 +359,13 @@ a number of aspects.  See \secref{abi-versions}.
 \subsection{Command line options for running Prolog}
 \label{sec:running-options}
 
-Note that \jargon{boolean options} may be written as \exam{--name},
+Note that \jargon{boolean options} may be written as \exam{--name}
 (true), \exam{--noname} or \exam{--no-name} (false).  They are written
 as \exam{--no-name} below as the default is `true'.
 
 \begin{description}
     \cmdlineoptionitem{--home=DIR}{}
-Use DIR as home directory.  See \secref{findhome} for details.
+Use \arg{DIR} as home directory.  See \secref{findhome} for details.
 
     \cmdlineoptionitem{--quiet}{}
 \index{verbose}\index{quiet}%
@@ -409,7 +407,7 @@ browser is \emph{not} launched.
     \cmdlineoptionitem{--sigalert=NUM}{}
 Use signal \arg{NUM} (1\ldots{}31) for alerting a thread. This is needed
 to make thread_signal/2, and derived Prolog signal handling act
-immediately when the target thread is blocked on an interruptable
+immediately when the target thread is blocked on an interruptible
 system call (e.g., sleep/1, read/write to most devices).  The default is
 to use \const{SIGUSR2}.  If \arg{NUM} is 0 (zero), this handler is not
 installed.  See prolog_alert_signal/2 to query or modify this value at
@@ -422,7 +420,7 @@ default, manipulating the terminal is enabled unless the system detects
 it is not connected to a terminal or it is running as a GNU-Emacs
 inferior process.  See also \prologflag{tty_control}.
 
-    \cmdlineoptionitem{--win_app}{}
+    \cmdlineoptionitem{--win-app}{}
 This option is available only in \program{swipl-win.exe} and is used for the
 start-menu item. If causes \program{plwin} to start in the folder
 \verb$...\My Documents\Prolog$ or local equivalent thereof (see
@@ -447,7 +445,7 @@ does not stop Prolog from loading the personal initialisation file.
 
     \cmdlineoptionitem{-f}{file}
 Use \arg{file} as initialisation file instead of the default
-\file{init.pl} `\argoption{-f}{none}' stops SWI-Prolog from searching
+\file{init.pl}. `\argoption{-f}{none}' stops SWI-Prolog from searching
 for a startup file. This option can be used as an alternative to
 \argoption{-s}{file} that stops Prolog from loading the personal
 initialisation file. See also \secref{initfile}.
@@ -500,7 +498,7 @@ flag \prologflag{argv} for obtaining the command line arguments.
 As of version 7.7.14 the stacks are no longer limited individually.
 Instead, only the combined size is limited. Note that 32~bit systems
 still pose a 128Mb limit. See \secref{memlimit}. The combined limit is
-by deault 1Gb on 64~bit machines and 512Mb on 32~bit machines.
+by default 1Gb on 64~bit machines and 512Mb on 32~bit machines.
 
 For example, to limit the stacks to 32Gb use the command below. Note
 that the stack limits apply \emph{per thread}. Individual threads may be
@@ -510,23 +508,23 @@ Any thread can call \term{set_prolog_flag}{stack_limit, Limit} (see
 inherited by threads created from this thread.
 
 \begin{code}
-$ swipl --stack_limit=32g
+$ swipl --stack-limit=32g
 \end{code}
 
 \begin{description}
-    \cmdlineoptionitem*{--stack_limit}{size[bkmg]}
-Limit the combined size of the Prolog stacks to the indicated size.
+    \cmdlineoptionitem*{--stack-limit}{=size[bkmg]}
+Limit the combined size of the Prolog stacks to the indicated \arg{size}.
 The suffix specifies the value as \textit{bytes}, \textit{Kbytes},
 \textit{Mbytes} or \textit{Gbytes}.
 
-    \cmdlineoptionitem*{-table_space}{size[bkmg]}
+    \cmdlineoptionitem*{--table-space}{=size[bkmg]}
 Limit for the \arg{table space}. This is where tries holding
 memoized\footnote{The letter M is used because the T was already in
 use. It is a memnonic for \textbf{M}emoizing.} answers for
 \jargon{tabling} are stored. The default is 1Gb on 64~bit machines and
 512Mb on 32~bit machines. See the Prolog flag
-\prologflag{table_space}
-    \cmdlineoptionitem*{-shared_table_space}{size[bkmg]}
+\prologflag{table_space}.
+    \cmdlineoptionitem*{--shared-table-space}{=size[bkmg]}
 Limit for the table space for \jargon{shared} tables. See
 \secref{tabling-shared}.
 \end{description}
@@ -1009,7 +1007,7 @@ And here are two example runs:
 ERROR: is/2: Arithmetic: `foo/0' is not a function
 \end{code}
 
-Prolog script may be lauched for debugging or inspection purposes using
+Prolog script may be launched for debugging or inspection purposes using
 the \cmdlineoption{-l} or \cmdlineoption{-t}. For example,
 \cmdlineoption{-l} merely loads the script, ignoring \const{main} and
 \const{program} initialization.
@@ -1152,7 +1150,7 @@ unbound, it will generate all defined Prolog flags. With \arg{Key}
 instantiated, it unifies \arg{Value} with the value of the Prolog flag
 or fails if the \arg{Key} is not a Prolog flag.
 
-Flags marked \textbf{rw} can be modified by the user using
+Flags marked \jargon{changeable} can be modified by the user using
 set_prolog_flag/2. Flag values are typed. Flags marked as \const{bool}
 can have the values \const{true} or \const{false}. The predicate
 create_prolog_flag/3 may be used to create flags that describe or
@@ -1181,7 +1179,7 @@ completed. Currently, the following flags are scoped to the source file:
 
 A new thread (see \secref{threads}) \emph{copies} all flags from the
 thread that created the new thread (its \jargon{parent}).\footnote{This
-is implemented using the copy-on-write tecnhnique.} As a consequence,
+is implemented using the copy-on-write technique.} As a consequence,
 modifying a flag inside a thread does not affect other threads.
 
 
@@ -1212,13 +1210,6 @@ See also PL_register_atom().\footnote{Given that SWI-Prolog has no
 limit on the length of atoms, 10,000 atoms may still occupy a lot of
 memory.  Applications using extremely large atoms may wish to call
 garbage_collect_atoms/0 explicitly or lower the margin.}
-
-    \prologflagitem{apple}{bool}{r}
-\index{MacOS}%
-If present and \const{true}, the operating system is MacOSX. Defined if
-the C compiler used to compile this version of SWI-Prolog defines
-\verb$__APPLE__$.  Note that the \prologflag{unix} is also defined
-for MacOSX.
 
     \prologflagitem{allow_dot_in_atom}{bool}{rw}
 If \const{true} (default \const{false}), dots may be embedded into atoms
@@ -1253,6 +1244,23 @@ defined if running on other operating systems. The API level may
 or may not match the API level of the running device, since it is
 the API level at compile time.
 
+    \prologflagitem{answer_write_options}{term}{rw}
+This argument is given as option-list to write_term/2 for printing results
+of queries. Default is \texttt{[quoted(true), portray(true),
+max_depth(10), attributes(portray)]}.
+
+    \prologflagitem{apple}{bool}{r}
+\index{MacOS}%
+If present and \const{true}, the operating system is MacOSX. Defined if
+the C compiler used to compile this version of SWI-Prolog defines
+\verb$__APPLE__$.  Note that the \prologflag{unix} is also defined
+for MacOSX.
+
+    \prologflagitem{arch}{atom}{r}
+Identifier for the hardware and operating system SWI-Prolog is running
+on. Used to select foreign files for the right architecture. See also
+\secref{shlib} and file_search_path/2.
+
     \prologflagitem{argv}{list}{rw}
 List is a list of atoms representing the application command line
 arguments. Application command line arguments are those that have
@@ -1262,11 +1270,6 @@ argument.  See also \prologflag{os_argv}.\footnote{Prior to version
 6.5.2, \prologflag{argv} was defined as \prologflag{os_argv} is now.
 The change was made for compatibility reasons and because the current
 definition is more practical.}
-
-    \prologflagitem{arch}{atom}{r}
-Identifier for the hardware and operating system SWI-Prolog is running
-on. Used to select foreign files for the right architecture. See also
-\secref{shlib} and file_search_path/2.
 
     \prologflagitem{associated_file}{atom}{r}
 Set if Prolog was started with a prolog file as argument.  Used by
@@ -1280,14 +1283,14 @@ It has the following values:
 \begin{description}
     \termitem{false}{}
 Predicates are never auto-loaded. If predicates have been imported
-before using autoload/1,2, load the referenced files immediately using
-use_module/1,2. Note that most of the development utilities such as
-listing/1 have to be explictly imported before they can be used at the
+before using autoload/[1,2], load the referenced files immediately using
+use_module/[1,2]. Note that most of the development utilities such as
+listing/1 have to be explicitly imported before they can be used at the
 toplevel.
 
     \termitem{explicit}{}
 Do not autoload from \jargon{autoload libraries}, but do use lazy
-loading for predicates imported using autoload/1,2.
+loading for predicates imported using autoload/[1,2].
 
     \termitem{user}{}
 As \const{false}, but to autoload library predicates into the global
@@ -1296,7 +1299,7 @@ implicitly available to the toplevel, but not to modules.
 
     \termitem{user_or_explicit}{}
 Combines \const{explicit} with \const{user}, providing lazy loading
-of predicates imported using autoload/1,2 and implicit access to the
+of predicates imported using autoload/[1,2] and implicit access to the
 whole library for the toplevel.
 
     \termitem{true}{}
@@ -1309,7 +1312,7 @@ is \const{codes}. If \cmdlineoption{--traditional} is given, the default
 is \const{symbol_char}, which allows using \verb$`$ in operators
 composed of symbols.\footnote{Older versions had a boolean flag
 \const{backquoted_strings}, which toggled between \const{string} and
-\const{symbol_char}}.  See also \secref{strings}.
+\const{symbol_char}}  See also \secref{strings}.
 
     \prologflagitem{backtrace}{bool}{rw}
 If \const{true} (default), print a backtrace on an uncaught exception.
@@ -1348,16 +1351,16 @@ CFLAGS used to compile SWI-Prolog.  See \secref{plld}.
     \prologflagitem{c_ldflags}{atom}{rw}
 LDFLAGS used to link SWI-Prolog. See \secref{plld}.
 
+    \prologflagitem{c_libplso}{atom}{rw}
+Libraries needed to link extensions (shared object, DLL) to SWI-Prolog.
+Typically empty on ELF systems and \const{-lswipl} on COFF-based
+systems.  See \secref{plld}.
+
     \prologflagitem{c_libs}{atom}{rw}
 Libraries needed to link executables that embed SWI-Prolog.  Typically
 \const{-lswipl} if the SWI-Prolog kernel is a shared (DLL).  If the
 SWI-Prolog kernel is in a static library, this flag also contains the
 dependencies.
-
-    \prologflagitem{c_libplso}{atom}{rw}
-Libraries needed to link extensions (shared object, DLL) to SWI-Prolog.
-Typically empty on ELF systems and \const{-lswipl} on COFF-based
-systems.  See \secref{plld}.
 
     \prologflagitem{char_conversion}{bool}{rw}
 Determines whether character conversion takes place while reading terms.
@@ -1449,15 +1452,15 @@ Otherwise just continue execution. The goal that raised the error will
 normally fail. See also the Prolog flag \prologflag{report_error}.
 Default is \const{true}.
 
+    \prologflagitem{debugger_show_context}{bool}{rw}
+If \const{true}, show the context module while printing a stack-frame in
+the tracer.  Normally controlled using the `C' option of the tracer.
+
     \prologflagitem{debugger_write_options}{term}{rw}
 This argument is given as option-list to write_term/2 for printing goals
 by the debugger.  Modified by the `w', `p' and `<N> d' commands of the
 debugger.  Default is \texttt{[quoted(true), portray(true),
 max_depth(10), attributes(portray)]}.
-
-    \prologflagitem{debugger_show_context}{bool}{rw}
-If \const{true}, show the context module while printing a stack-frame in
-the tracer.  Normally controlled using the `C' option of the tracer.
 
     \prologflagitem{dialect}{atom}{r}
 Fixed to \const{swi}.  The code below is a reliable and portable way to
@@ -1545,7 +1548,7 @@ The highest integer that can be represented precisely as a floating
 point number.
 
     \prologflagitem{float_min}{float}{r}
-The smalles representable floating point number above 0.0.  See also
+The smallest representable floating point number above 0.0.  See also
 \funcref{nexttoward}{2}.
 
     \prologflagitem{float_overflow}{atom}{rw}
@@ -1580,17 +1583,17 @@ explicit request.  May be changed.
 
     \prologflagitem{gc_thread}{bool}{r}
 If \const{true} (default if threading is enabled), atom and
-clause garbage collection are executed in a seperate thread with the
+clause garbage collection are executed in a separate thread with the
 \jargon{alias} \const{gc}. Otherwise the thread that detected sufficient
 garbage executes the garbage collector. As running these global
-collectors may take relatively long, using a seperate thread improves
+collectors may take relatively long, using a separate thread improves
 real time behaviour. The \const{gc} thread can be controlled using
 set_prolog_gc_thread/1.
 
     \prologflagitem{generate_debug_info}{bool}{rw}
 If \const{true} (default) generate code that can be debugged using
 trace/0, spy/1, etc. Can be set to \const{false} using the
-\cmdlineoption{-nodebug}.   This flag is scoped within a source file.
+\cmdlineoption{--no-debug}.   This flag is scoped within a source file.
 Many of the libraries have
 \verb$:- set_prolog_flag(generate_debug_info, false)$ to hide their
 details from a normal trace.%
@@ -1680,13 +1683,6 @@ the value of this flag is the negation of the \prologflag{debug} flag.
 As programs may run out of stack if last-call optimisation is omitted,
 it is sometimes necessary to enable it during debugging.
 
-    \prologflagitem{max_arity}{unbounded}{r}
-ISO Prolog flag describing there is no maximum arity to compound terms.
-
-    \prologflagitem{max_integer}{integer}{r}
-Maximum integer value if integers are \emph{bounded}.  See also
-the flag \prologflag{bounded} and \secref{artypes}.
-
     \prologflagitem{max_answers_for_subgoal}{integer}{rw}
 Limit the number of answers in a table. The atom
 \const{infinite} clears the flag.  By default this flag is not defined.
@@ -1697,6 +1693,13 @@ The action taken when a table reaches the number of
 answers specified in \prologflag{max_answers_for_subgoal}. Supported values
 are \const{bounded_rationality}, \const{error} (default) or
 \const{suspend}.
+
+    \prologflagitem{max_arity}{unbounded}{r}
+ISO Prolog flag describing there is no maximum arity to compound terms.
+
+    \prologflagitem{max_integer}{integer}{r}
+Maximum integer value if integers are \emph{bounded}.  See also
+the flag \prologflag{bounded} and \secref{artypes}.
 
     \prologflagitem{max_rational_size}{integer}{rw}
 Limit the size in bytes for rational numbers. This \jargon{tripwire} can
@@ -1730,7 +1733,7 @@ See \secref{tabling-restraints} for details.
 
     \prologflagitem{max_table_subgoal_size_action}{atom}{rw}
 The action taken if a tabled goal exceeds
-\prologflagitem{max_table_subgoal_size}.  Supported values
+\prologflag{max_table_subgoal_size}.  Supported values
 are \const{error} (default), \const{abstract} and \const{suspend}.
 
     \prologflagitem{max_tagged_integer}{integer}{r}
@@ -1837,15 +1840,6 @@ argument is within the range of a tagged integer for 32-bit machines.
 Path to a POSIX compatible shell.  This default is typically
 \file{/bin/sh}.  This flag is used by shell/1 and qsave_program/2.
 
-    \prologflagitem{print_write_options}{term}{rw}
-Specifies the options for write_term/2 used by print/1 and print/2.
-
-    \prologflagitem{tmp_dir}{atom}{rw}
-Path to the temporary directory. initialised from the environment
-variable \const{TMP} or \const{TEMP} in windows. If this variable is not
-defined a default is used. This default is typically \file{/tmp} or
-\file{c:/temp} in windows.
-
     \prologflagitem{prefer_rationals}{bool}{rw}
 Only provided if the system is compiled with unbounded and rational
 arithmetic support (see \prologflag{bounded}). If \const{true},
@@ -1874,6 +1868,9 @@ The current default is \const{false}.  We consider changing this to
 \const{true} in the future.  Users are strongly encouraged to set
 this flag to \const{true} and report issues this may cause.
 
+    \prologflagitem{print_write_options}{term}{rw}
+Specifies the options for write_term/2 used by print/1 and print/2.
+
     \prologflagitem{prompt_alternatives_on}{atom}{rw}
 \index{prompt, alternatives}%
 Determines prompting for alternatives in the Prolog top level. Default is
@@ -1896,7 +1893,7 @@ production code.
 This option provides the default for the \term{qcompile}{+Atom} option
 of load_files/2.
 
-    \prologflagitem{rational_syntax}{rw}
+    \prologflagitem{rational_syntax}{atom}{rw}
 Determines the read and write syntax for rational numbers. Possible
 values are \const{natural} (e.g., \exam{1/3}) or \const{compatibility}
 (e.g., \exam{1r3}). The \const{compatibility} syntax is always accepted.
@@ -1935,15 +1932,15 @@ SWI-Prolog uses its own console (\program{swipl-win.exe} on Windows,
 the Qt based \program{swipl-win} on MacOS) which provides line editing.
 \end{description}
 
-    \prologflagitem{resource_database}{atom}{r}
-Set to the absolute filename of the attached state.  Typically this is
-the file \file{boot32.prc}, the file specified with \cmdlineoption{-x}
-or the running executable.  See also resource/3.
-
     \prologflagitem{report_error}{bool}{rw}
 If \const{true}, print error messages; otherwise suppress them. May
 be changed. See also the \prologflag{debug_on_error} Prolog flag.
 Default is \const{true}, except for the runtime version.
+
+    \prologflagitem{resource_database}{atom}{r}
+Set to the absolute filename of the attached state.  Typically this is
+the file \file{boot32.prc}, the file specified with \cmdlineoption{-x}
+or the running executable.  See also resource/3.
 
     \prologflagitem{runtime}{bool}{r}
 If present and \const{true}, SWI-Prolog is compiled with -DO_RUNTIME,
@@ -1962,7 +1959,7 @@ with qsave_program/[1,2].
 Indicates that part of the SWI-Prolog system files are installed in
 \file{<prefix>/share/swipl} instead of in the home at the
 \file{<prefix>/lib/swipl}.  This flag indicates the location of this
-\emph{shared home} and the directory is added to the file seach path
+\emph{shared home} and the directory is added to the file search path
 \const{swi}.  See file_search_path/2 and the flag \prologflag{home}.
 
     \prologflagitem{shared_object_extension}{atom}{r}
@@ -1982,12 +1979,12 @@ Space reserved for storing shared answer tables. See
     \prologflagitem{signals}{bool}{r}
 Determine whether Prolog is handling signals (software interrupts). This
 flag is \const{false} if the hosting OS does not support signal handling
-or the command line option \cmdlineoption{-nosignals} is active.  See
+or the command line option \cmdlineoption{--no-signals} is active.  See
 \secref{sigembedded} for details.
 
     \prologflagitem{stack_limit}{int}{rw}
 Limits the combined sizes of the Prolog stacks for the current thread.
-See alse \cmdlineoption{--stack} and \secref{memlimit}.
+See also \cmdlineoption{--stack-limit} and \secref{memlimit}.
 
     \prologflagitem{stream_type_check}{atom}{rw}
 Defines whether and how strictly the system validates that byte I/O
@@ -1997,7 +1994,7 @@ to binary streams. Values are \const{false} (no checking), \const{true}
 (default), the system accepts byte I/O from text stream that use ISO
 Latin-1 encoding and accepts writing text to binary streams.
 
-    \termitem{string_stack_tripwire}{int}{rw}
+    \prologflagitem{string_stack_tripwire}{int}{rw}
 Maintenance for foreign language string management.  Prints a warning
 if the string stack depth hits the tripwire value. See
 \secref{foreign-strings} for details.
@@ -2010,11 +2007,11 @@ calling thread. See also thread_self/1.
 
     \prologflagitem{table_incremental}{bool}{rw}
 Set the default for whether to use incremental tabling or not.
-Initially set the \const{false}.  See table/1.
+Initially set to \const{false}.  See table/1.
 
     \prologflagitem{table_shared}{bool}{rw}
 Set the default for whether to use shared tabling or not.
-Initially set the \const{false}.  See table/1.
+Initially set to \const{false}.  See table/1.
 
     \prologflagitem{table_space}{integer}{rw}
 Space reserved for storing answer tables for \jargon{tabled predicates}
@@ -2024,19 +2021,26 @@ nodes in the answer tries.} When exceeded a
 
     \prologflagitem{table_subsumptive}{bool}{rw}
 Set the default choice between \jargon{variant} tabling and
-\jargon{subsumptive} tabling.  Initially set the \const{false}.  See table/1.
+\jargon{subsumptive} tabling.  Initially set to \const{false}.  See
+table/1.
 
     \prologflagitem{threads}{bool}{rw}
 True when threads are supported.  If the system is compiled without
 thread support the value is \const{false} and read-only.  Otherwise
 the value is \const{true} unless the system was started with the
-\cmdlineoption{--nothreads}.  Threading may be disabled only if no
+\cmdlineoption{--no-threads}.  Threading may be disabled only if no
 threads are running.  See also the \prologflag{gc_thread} flag.
 
     \prologflagitem{timezone}{integer}{r}
 Offset in seconds west of GMT of the current time zone. Set at
 initialization time from the \const{timezone} variable associated with
 the POSIX tzset() function. See also format_time/3.
+
+    \prologflagitem{tmp_dir}{atom}{rw}
+Path to the temporary directory. initialised from the environment
+variable \const{TMP} or \const{TEMP} in windows. If this variable is not
+defined a default is used. This default is typically \file{/tmp} or
+\file{c:/temp} in windows.
 
     \prologflagitem{toplevel_goal}{term}{rw}
 Defines the goal that is executed after running the initialization goals
@@ -2049,10 +2053,10 @@ used and the toplevel is \const{default}, the toplevel is set to
 \const{halt} (see halt/0).
 
     \prologflagitem{toplevel_list_wfs_residual_program}{bool}{rw}
-If \const{true} (default) and the answer is \jargon{unknown} according
+If \const{true} (default) and the answer is \jargon{undefined} according
 to the Well Founded Semantics (see \secref{WFS}), list the
 \jargon{residual program} before the answer. Otherwise the answer
-terminated with \textbf{unknown}. See also unknown/0.
+terminated with \textbf{undefined}. See also undefined/0.
 
     \prologflagitem{toplevel_mode}{atom}{rw}
 If \const{backtracking} (default), the toplevel backtracks after
@@ -2097,11 +2101,6 @@ in Prolog (as illustrated by \verb!S == R!).
 S = s(S),
 R = s(s(R)).
 \end{code}
-
-    \prologflagitem{answer_write_options}{term}{rw}
-This argument is given as option-list to write_term/2 for printing results
-of queries. Default is \texttt{[quoted(true), portray(true),
-max_depth(10), attributes(portray)]}.
 
     \prologflagitem{toplevel_prompt}{atom}{rw}
 Define the prompt that is used by the interactive top level. The
@@ -2207,6 +2206,11 @@ If \const{true} the normal consult message will be printed if a library
 is autoloaded. By default this message is suppressed. Intended to be
 used for debugging purposes.
 
+    \prologflagitem{verbose_file_search}{bool}{rw}
+If \const{true} (default \const{false}), print messages indicating the
+progress of absolute_file_name/[2,3] in locating files.  Intended for
+debugging complicated file-search paths.  See also file_search_path/2.
+
     \prologflagitem{verbose_load}{atom}{rw}
 Determines messages printed for loading (compiling) Prolog files.
 Current values are \const{full} (print a message at the start and end of
@@ -2215,11 +2219,6 @@ file loaded), \const{brief} (print a message at end of loading the
 toplevel file), and \const{silent} (no messages are printed, default).
 The value of this flag is normally controlled by the option
 \term{silent}{Bool} provided by load_files/2.
-
-    \prologflagitem{verbose_file_search}{bool}{rw}
-If \const{true} (default \const{false}), print messages indicating the
-progress of absolute_file_name/[2,3] in locating files.  Intended for
-debugging complicated file-search paths.  See also file_search_path/2.
 
     \prologflagitem{version}{integer}{r}
 The version identifier is an integer with value: $$10000 \times
@@ -2235,13 +2234,6 @@ platform-specific version information as a list. \arg{Extra} is used for
     \prologflagitem{version_git}{atom}{r}
 Available if created from a git repository.  See \program{git-describe}
 for details.
-
-    \prologflagitem{windows}{bool}{r}
-If present and \const{true}, the operating system is MS-Windows.
-
-    \prologflagitem{wine_version}{atom}{r}
-If present, SWI-Prolog is the MS-Windows version running under
-the \href{https://www.winehq.org/}{Wine} emulator.
 
     \prologflagitem{warn_override_implicit_import}{bool}{rw}
 If \const{true} (default), a warning is printed if an implicitly
@@ -2273,10 +2265,14 @@ If present and \const{true}, the operating system is an implementation
 of Microsoft Windows. This flag is only available on MS-Windows based
 versions.  See also \prologflag{unix}.
 
+    \prologflagitem{wine_version}{atom}{r}
+If present, SWI-Prolog is the MS-Windows version running under
+the \href{https://www.winehq.org/}{Wine} emulator.
+
     \prologflagitem{write_attributes}{atom}{rw}
 Defines how write/1 and friends write attributed variables.  The option
 values are described with the \const{attributes} option of
-write_term/3.  Default is \const{ignore}.
+write_term/2.  Default is \const{ignore}.
 
     \prologflagitem{write_help_with_overstrike}{bool}{r}
 Internal flag used by help/1 when writing to a terminal. If
@@ -2422,7 +2418,7 @@ this mechanism loads the file silently. The current_prolog_flag/2
 key \prologflag{verbose_autoload} is provided to get verbose loading. The
 Prolog flag \prologflag{autoload} can be used to enable/disable the
 autoload system.  A more controlled form of autoloading as well as
-lazy loading application modules is provided by autoload/1,2.
+lazy loading application modules is provided by autoload/[1,2].
 
 Autoloading only handles (library) source files that use the module
 mechanism described in \chapref{modules}.  The files are loaded
@@ -2522,7 +2518,7 @@ order of the library directories is changed.
 \end{description}
 
 When creating an executable using either qsave_program/2 or the
-\cmdlineoption{-c} command line options, it is necessarry to load
+\cmdlineoption{-c} command line options, it is necessary to load
 all predicates that would normally be autoloaded explicitly.  This
 is discussed in \secref{runtime}.  See autoload_all/0.
 
@@ -2791,12 +2787,12 @@ values below. Note that write_canonical/1 always uses the compatible
 
 \begin{description}
     \termitem{natural}{}
-This is the default mode where we ignore the abiguity issue and follow
+This is the default mode where we ignore the ambiguity issue and follow
 the most natural <integer>/<nonneg> alternative. Here, <integer> follows
 the normal rules for Prolog decimal integers and <nonneg> does the same,
 but does not allows for a sign. Note that the parser translates a
 rational number to its canonical form which implies there are no common
-divisors in the resulting numerator and demoninator. Examples of ration
+divisors in the resulting numerator and denominator. Examples of ration
 numbers are:
 
 \begin{tabular}{ll}
@@ -3211,7 +3207,7 @@ det(det(the), _, [116, 104, 101|A], A).
 Deep argument indexing will create indexes for the 3rd list argument,
 providing speedup and making clause selection deterministic if all rules
 start with a literal and all literals are unique in the first 6
-elements. Note that deep index creation stops as soon as a determistic
+elements. Note that deep index creation stops as soon as a deterministic
 choice can be made or there are no two clauses that have the same
 name/arity combination.
 
@@ -3400,7 +3396,7 @@ virtually unlimited on 64-bit machines.
 
 As of version 7.7.14, the stacks are restricted by the writeable flag
 \prologflag{stack_limit} or the command line option
-\cmdlineoption{--stack_limit}. This flag limits the combined size of the
+\cmdlineoption{--stack-limit}. This flag limits the combined size of the
 three stacks per thread. The default limit is currently 512~Mbytes on
 32-bit machines, which imposes no additional limit considering the
 128~Mbytes hard limit on 32-bit and 1~Gbytes on 64-bit machines.
@@ -3526,7 +3522,7 @@ compatibility between versions. Data and programs can often be
 represented in binary form.  This touches a number of interfaces
 with varying degrees of compatibility.  The relevant version numbers
 and signatures are made available by PL_version(), the
-\cmdlineoption{abi_version} and the Prolog flag
+\cmdlineoption{--abi-version} and the Prolog flag
 \prologflag{abi_version}.
 
 \begin{description}

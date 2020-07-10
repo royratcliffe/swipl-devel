@@ -157,6 +157,8 @@ temporary modules.
 
     - current_op/3 to facilitate using the Pengine operators for
       rendering results.
+    - current_predicate/1, which no longer enumerates through
+      temporary modules.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 Module
@@ -179,12 +181,71 @@ releaseModule(Module m)
     if ( --m->references == 0 &&
 	 true(m, M_DESTROYED) )
     { unlinkSourceFilesModule(m);
+#ifdef O_PLMT
+      if ( m->wait )
+	free_wait_area(m->wait);
+#endif
       GD->statistics.modules--;
       PL_unregister_atom(m->name);
       unallocModule(m);
     }
     PL_UNLOCK(L_MODULE);
   }
+}
+
+
+ModuleEnum
+newModuleEnum(int flags)
+{ ModuleEnum en = malloc(sizeof(*en));
+
+  if ( en )
+  { if ( (en->tenum = newTableEnum(GD->tables.modules)) )
+    { en->current = NULL;
+      en->flags = flags;
+    } else
+    { free(en);
+      en = NULL;
+    }
+  }
+
+  return en;
+}
+
+Module
+advanceModuleEnum(ModuleEnum en)
+{ void *v;
+  Module m = NULL;
+
+  PL_LOCK(L_MODULE);
+  for(;;)
+  { if ( advanceTableEnum(en->tenum, NULL, &v) )
+      m = v;
+    else
+      m = NULL;
+
+    if ( m && m->class == ATOM_temporary )
+    { if ( (en->flags&MENUM_TEMP) )
+      { m->references++;
+	if ( en->current )
+	  releaseModule(en->current);
+	en->current = m;
+      } else
+	continue;
+    }
+
+    break;
+  }
+  PL_UNLOCK(L_MODULE);
+
+  return m;
+}
+
+void
+freeModuleEnum(ModuleEnum en)
+{ freeTableEnum(en->tenum);
+  if ( en->current )
+    releaseModule(en->current);
+  free(en);
 }
 
 
@@ -291,6 +352,7 @@ static void
 unlinkSourceFilesModule(Module m)
 { size_t i, high = highSourceFileIndex();
   struct bit_vector *vec = new_bitvector(high+1);
+  SourceFile sf;
 
   for_table(m->procedures, name, value,
 	    markSourceFilesProcedure(value, vec));
@@ -305,6 +367,11 @@ unlinkSourceFilesModule(Module m)
   }
 
   free_bitvector(vec);
+
+  if ( (sf = m->file) )
+  { m->file = NULL;
+    releaseSourceFile(sf);
+  }
 }
 
 
@@ -864,7 +931,7 @@ is associated to multiple modules.
 static
 PRED_IMPL("$current_module", 2, current_module, PL_FA_NONDETERMINISTIC)
 { PRED_LD
-  TableEnum e;
+  ModuleEnum e;
   Module m;
   atom_t name;
   SourceFile sf = NULL;
@@ -890,10 +957,10 @@ PRED_IMPL("$current_module", 2, current_module, PL_FA_NONDETERMINISTIC)
 	return FALSE;			/* given, but non-existing file */
 
       if ( sf )
-      { if ( sf->modules )
-	{ int rc = FALSE;
+      { int rc = FALSE;
 
-	  PL_LOCK(L_PREDICATE);
+	if ( sf->modules )
+	{ PL_LOCK(L_PREDICATE);
 	  if ( sf->modules->next )
 	  { term_t tail = PL_copy_term_ref(module);
 	    term_t head = PL_new_term_ref();
@@ -914,20 +981,21 @@ PRED_IMPL("$current_module", 2, current_module, PL_FA_NONDETERMINISTIC)
 
 	out:
 	  PL_UNLOCK(L_PREDICATE);
-	  return rc;
 	}
-	return FALSE;			/* source-file has no modules */
+	releaseSourceFile(sf);
+
+	return rc;			/* source-file has no modules */
       }
 
-      e = newTableEnum(GD->tables.modules);
+      if ( !(e = newModuleEnum(0)) )
+	return PL_no_memory();
       break;
     case FRG_REDO:
       e = CTX_PTR;
-      get_existing_source_file(file, &sf PASS_LD);
       break;
     case FRG_CUTTED:
       e = CTX_PTR;
-      freeTableEnum(e);
+      freeModuleEnum(e);
       succeed;
     default:
       assert(0);
@@ -936,7 +1004,7 @@ PRED_IMPL("$current_module", 2, current_module, PL_FA_NONDETERMINISTIC)
 
 					/* mode (-,-) */
 
-  while( advanceTableEnum(e, NULL, (void**)&m) )
+  while( (m=advanceModuleEnum(e)) )
   { atom_t f = ( !m->file ? ATOM_nil : m->file->name);
 
     if ( m->class == ATOM_system && m->name != ATOM_system &&
@@ -950,7 +1018,7 @@ PRED_IMPL("$current_module", 2, current_module, PL_FA_NONDETERMINISTIC)
     break;				/* must be an error */
   }
 
-  freeTableEnum(e);
+  freeModuleEnum(e);
   return FALSE;
 }
 
@@ -1401,7 +1469,9 @@ export_pi1(term_t pi, Module module ARG_LD)
 
   if ( ReadingSource )
   { SourceFile sf = lookupSourceFile(source_file_name, TRUE);
-    return exportProcedureSource(sf, module, proc);
+    int rc = exportProcedureSource(sf, module, proc);
+    releaseSourceFile(sf);
+    return rc;
   } else
   { return exportProcedure(module, proc);
   }

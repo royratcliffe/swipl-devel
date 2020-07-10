@@ -292,7 +292,11 @@ typedef _sigset_t sigset_t;
 #ifdef ASSERT_H_REQUIRES_STDIO_H
 #include <stdio.h>
 #endif /*ASSERT_H_REQUIRES_STDIO_H*/
+#ifdef NO_ASSERT_H		/* see pl-assert.c */
+#define assert(c) (void)0
+#else
 #include <assert.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
@@ -872,7 +876,7 @@ with one operation, it turns out to be faster as well.
 #define TRACE_ME		(0x02000000) /* Can be debugged */
 #define P_INCREMENTAL		(0x04000000) /* Incremental tabling */
 #define P_AUTOLOAD		(0x08000000) /* autoload/2 explicit import */
-#define P_TSHARED		(0x10000000) /* Using a shared table */
+#define P_WAITED_FOR		(0x10000000) /* Someone is waiting for this predicate */
 #define	P_LOCKED_SUPERVISOR	(0x20000000) /* Fixed supervisor */
 #define FILE_ASSIGNED		(0x40000000) /* Is assigned to a file */
 #define P_REDEFINED		(0x80000000) /* Overrules a definition */
@@ -923,6 +927,7 @@ with one operation, it turns out to be faster as well.
 #define UNKNOWN_MASK		(UNKNOWN_ERROR|UNKNOWN_WARNING|UNKNOWN_FAIL)
 #define M_VARPREFIX		(0x00008000) /* _var, Atom */
 #define M_DESTROYED		(0x00010000)
+#define M_WAITED_FOR		(0x00020000) /* thread_wait/2 on this module */
 
 /* Flags on functors */
 
@@ -983,6 +988,10 @@ Macros for environment frames (local stack frames)
 				      (f)->predicate->functor->arity : \
 				      (f)->clause->clause->prolog_vars)
 
+
+		 /*******************************
+		 *	 LOGICAL UPDATE		*
+		 *******************************/
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Generations must be 64-bit to  avoid   overflow  in realistic scenarios.
 This makes them the only 64-bit value in struct localFrame. Stack frames
@@ -998,11 +1007,15 @@ We enable this  if the alignment  of an int64_t type  is not the same as
 the alignment of pointers.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifdef O_LOGICAL_UPDATE
 typedef uint64_t gen_t;
 
-#define GEN_MAX (~(gen_t)0)
-#define GEN_NEW_DIRTY (gen_t)0
+#define GEN_INVALID   ((gen_t)0)
+#define GEN_INFINITE  (~(gen_t)0)
+#define GEN_NEW_DIRTY ((gen_t)0)
+#define GEN_TRANSACTION_BASE 0x8000000000000000
+#define GEN_TRANSACTION_SIZE 0x0000000100000000
+#define GEN_MAX (GEN_TRANSACTION_BASE-1)
+#define GEN_TRMAX(g0) ((g0)|(GEN_TRANSACTION_SIZE-1))
 
 #if ALIGNOF_INT64_T != ALIGNOF_VOIDP
 typedef struct lgen_t
@@ -1032,10 +1045,6 @@ typedef struct ggen_t
   uint32_t	gen_u;
 } ggen_t;
 #endif /*HAVE_GCC_ATOMIC_8 || SIZEOF_VOIDP == 8*/
-#else /*O_LOGICAL_UPDATE*/
-#define global_generation()	 (0)
-#define next_global_generation() (0)
-#endif /*O_LOGICAL_UPDATE*/
 
 #define setGenerationFrame(fr) setGenerationFrame__LD((fr) PASS_LD)
 
@@ -1064,6 +1073,10 @@ introduce a garbage collector (TBD).
 #define enterDefinition(def) (void)0
 #define leaveDefinition(def) (void)0
 
+
+		 /*******************************
+		 *	 INHIBIT SIGNALS	*
+		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 At times an abort is not allowed because the heap  is  inconsistent  the
@@ -1222,29 +1235,13 @@ typedef struct functor_table
 
 #define FUNCTOR_IS_VALID(flags)		((flags) & VALID_F)
 
-
-#ifdef O_LOGICAL_UPDATE
-#define VISIBLE_CLAUSE(cl, gen) \
-	( ( (cl)->generation.created <= (gen) && \
-	    (cl)->generation.erased   > (gen) && \
-	    (cl)->generation.erased  != LD->gen_reload \
-	  ) || \
-	  ( (cl)->generation.created == LD->gen_reload \
-	  ) \
-	)
 #define GLOBALLY_VISIBLE_CLAUSE(cl, gen) \
 	( (cl)->generation.created <= (gen) && \
 	  (cl)->generation.erased   > (gen) \
 	)
-#else
-#define VISIBLE_CLAUSE(cl, gen) false(cl, CL_ERASED)
-#define GLOBALLY_VISIBLE_CLAUSE(cl, gen) false(cl, CL_ERASED)
-#endif
 
 #define visibleClause(cl, gen) visibleClause__LD(cl, gen PASS_LD)
 #define visibleClauseCNT(cl, gen) visibleClauseCNT__LD(cl, gen PASS_LD)
-
-#define GEN_INVALID 0
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Struct clause must be a  multiple   of  sizeof(word)  for compilation on
@@ -1269,6 +1266,7 @@ struct clause
   unsigned int		source_no;	/* Index of source-file */
   unsigned int		owner_no;	/* Index of owning source-file */
   unsigned int		references;	/* # ClauseRef pointing at me */
+  unsigned int		tr_erased_no;	/* # transactions that erased me */
   code			code_size;	/* size of ->codes */
   code			codes[1];	/* VM codes of clause */
 };
@@ -1511,9 +1509,9 @@ typedef struct definition_refs
 #define PROC_IMPORTED	 (0x0004)	/* Procedure is imported */
 
 struct procedure
-{ Definition	 definition;		/* definition of procedure */
-  unsigned short flags;			/* PROC_WEAK */
-  unsigned short source_no;		/* Source I'm assigned to */
+{ Definition	definition;		/* definition of procedure */
+  unsigned int  flags;			/* PROC_WEAK */
+  unsigned int	source_no;		/* Source I'm assigned to */
 };
 
 struct localFrame
@@ -1767,8 +1765,9 @@ struct sourceFile
 #endif
   int		magic;			/* Magic number */
   int		count;			/* number of times loaded */
-  unsigned	number_of_clauses;	/* number of clauses */
-  unsigned	index     : 24;		/* index number (1,2,...) */
+  unsigned int	number_of_clauses;	/* number of clauses */
+  unsigned int	index;			/* index number (1,2,...) */
+  unsigned int	references;		/* Reference count */
   unsigned	system     : 1;		/* system sourcefile: do not reload */
   unsigned	from_state : 1;		/* Loaded from resource DB state */
   unsigned	resource   : 1;		/* Loaded from resource DB file */
@@ -1801,6 +1800,7 @@ struct module
   size_t	code_limit;	/* Limit for code_size */
 #ifdef O_PLMT
   counting_mutex *mutex;	/* Mutex to guard module modifications */
+  struct thread_wait_area *wait;/* Manage waiting threads */
 #endif
 #ifdef O_PROLOG_HOOK
   Procedure	hook;		/* Hooked module */
@@ -1811,6 +1811,19 @@ struct module
   int		references;	/* see acquireModule() */
   gen_t		last_modified;	/* Generation I was last modified */
 };
+
+#define MENUM_TEMP	0x1	/* Also enumerate temporary modules */
+
+typedef struct module_enum
+{ TableEnum	tenum;
+  Module        current;
+  int		flags;
+} module_enum, *ModuleEnum;
+
+
+		 /*******************************
+		 *	      TRAIL		*
+		 *******************************/
 
 struct trail_entry
 { Word		address;	/* address of the variable */

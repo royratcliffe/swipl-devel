@@ -174,14 +174,19 @@ typedef struct delay_info
 		 *	       IDG		*
 		 *******************************/
 
+#define IDG_NODE_MAGIC 0x347e54d2
+#define IDG_MDEP_MAGIC 0x745af3b0
+
 typedef struct idg_node
-{ Table		affected;		/* parent nodes */
-  Table		dependent;		/* childs */
+{ int           magic;			/* IDG_MDEP_MAGIC */
   trie	       *atrie;			/* answer trie */
+  Table		affected;		/* parent IDG nodes */
+  Table		dependent;		/* child IDG nodes */
   size_t	answer_count;		/* #answers in previous complete state */
   unsigned	new_answer : 1;		/* Update generated a new answer */
   unsigned	reevaluating : 1;	/* currently re-evaluating */
   unsigned	aborted : 1;		/* re-evaluation was aborted */
+  unsigned	monotonic : 1;		/* Associated predicate is monotonic */
   int		falsecount;		/* Invalidate count */
 #ifdef O_TRIE_STATS
   struct
@@ -191,6 +196,20 @@ typedef struct idg_node
 #endif
 } idg_node;
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Linked list of dependencies.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+typedef struct idg_mdep
+{ int            magic;			/* IDG_MDEP_MAGIC */
+  fastheap_term *dependency;		/* dependency structure */
+  union
+  { idg_node    *child;			/* Final child node */
+    struct idg_mdep *dep;
+    void *any;
+  } next;
+} idg_mdep;
 
 typedef struct trie_array
 { trie **blocks[MAX_BLOCKS];
@@ -202,11 +221,15 @@ typedef struct trie_array
 		 *     PREDICATE PROPERTIES	*
 		 *******************************/
 
+#define TP_MONOTONIC	(0x0001)	/* Monotonic tabling */
+#define TP_SHARED	(0x0002)	/* Shared tabling */
+
 typedef struct table_props
-{ size_t abstract;			/* IDG abstraction */
-  size_t subgoal_abstract;		/* Subgoal abstraction */
-  size_t answer_abstract;		/* Answer abstraction */
-  size_t max_answers;			/* Answer count limit */
+{ unsigned int	flags;			/* TP_* flags */
+  size_t	abstract;		/* IDG abstraction */
+  size_t	subgoal_abstract;	/* Subgoal abstraction */
+  size_t	answer_abstract;	/* Answer abstraction */
+  size_t	max_answers;		/* Answer count limit */
 } table_props;
 
 
@@ -226,9 +249,9 @@ COMMON(int)	idg_add_dyncall(Definition def, trie *ctrie,
 COMMON(int)	tbl_is_predicate_attribute(atom_t key);
 COMMON(void)	tbl_reset_tabling_attributes(Definition def);
 COMMON(int)	tbl_get_predicate_attribute(Definition def,
-					    atom_t att, size_t *value);
+					    atom_t att, term_t value);
 COMMON(int)	tbl_set_predicate_attribute(Definition def,
-					    atom_t att, size_t value);
+					    atom_t att, term_t value);
 COMMON(int)	tbl_is_restraint_flag(atom_t key);
 COMMON(int)	tbl_get_restraint_flag(term_t t, atom_t key ARG_LD);
 COMMON(int)	tbl_set_restraint_flag(term_t t, atom_t key ARG_LD);

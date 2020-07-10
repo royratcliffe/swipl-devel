@@ -612,6 +612,7 @@ struct PL_local_data
     alloc_pool *node_pool;		/* Node allocation pool for tries */
     int	has_scheduling_component;	/* A leader was created */
     int in_answer_completion;		/* Running answer completion */
+    int in_assert_propagation;		/* Running propagate_assert/1 */
     term_t delay_list;			/* Global delay list */
     term_t idg_current;			/* Current node in IDG (trie symbol) */
     struct
@@ -707,8 +708,21 @@ struct PL_local_data
     struct _thread_sig   *sig_tail;	/* Tail of signal queue */
     DefinitionChain local_definitions;	/* P_THREAD_LOCAL predicates */
     simpleMutex scan_lock;		/* Hold for asynchronous scans */
+    thread_wait_for *waiting_for;	/* thread_wait/2 info */
+    alert_channel alert;		/* How to alert the thread */
   } thread;
 #endif
+
+  struct
+  { gen_t	gen_start;		/* Global start generation */
+    gen_t	gen_base;		/* Local  start generation */
+    gen_t	gen_max;		/* Transaction max gen */
+    gen_t	gen_nest;		/* Start of nested generation */
+    gen_t	generation;		/* Local current generation */
+    Table	clauses;		/* Affected clauses */
+    term_t	id;			/* Default the goal */
+    struct tr_stack *stack;		/* Nested transaction stack */
+  } transaction;
 
 #ifdef O_LOCALE
   struct

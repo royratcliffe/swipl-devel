@@ -85,6 +85,9 @@
             nb_setval/2,                        % +Var, +Value
             thread_create/2,                    % :Goal, -Id
             thread_join/1,                      % +Id
+            transaction/1,                      % :Goal
+            transaction/3,                      % :Goal, :Constraint, +Mutex
+            snapshot/1,                         % :Goal
             set_prolog_gc_thread/1,		% +Status
 
             '$wrap_predicate'/5                 % :Head, +Name, -Closure, -Wrapped, +Body
@@ -93,7 +96,10 @@
 :- meta_predicate
     dynamic(:, +),
     use_foreign_library(:),
-    use_foreign_library(:, +).
+    use_foreign_library(:, +),
+    transaction(0),
+    transaction(0,0,+),
+    snapshot(0).
 
 
                 /********************************
@@ -918,6 +924,8 @@ table_flag(shared, Pred) :-
     '$get_predicate_attribute'(Pred, tshared, 1).
 table_flag(incremental, Pred) :-
     '$get_predicate_attribute'(Pred, incremental, 1).
+table_flag(monotonic, Pred) :-
+    '$get_predicate_attribute'(Pred, monotonic, 1).
 table_flag(subgoal_abstract(N), Pred) :-
     '$get_predicate_attribute'(Pred, subgoal_abstract, N).
 table_flag(answer_abstract(N), Pred) :-
@@ -1028,10 +1036,7 @@ set_pprops([H|T], M, Props) :-
     set_pprops1(Props, M:H),
     strip_module(M:H, M2, P),
     '$pi_head'(M2:P, Pred),
-    (   '$get_predicate_attribute'(Pred, incremental, 1)
-    ->  '$wrap_incremental'(Pred)
-    ;   '$unwrap_incremental'(Pred)
-    ),
+    '$set_table_wrappers'(Pred),
     set_pprops(T, M, Props).
 
 set_pprops1([], _).
@@ -1516,6 +1521,19 @@ set_prolog_gc_thread(stop) :-
     ).
 set_prolog_gc_thread(Status) :-
     '$domain_error'(gc_thread, Status).
+
+%!  transaction(:Goal).
+%!  snapshot(:Goal).
+%
+%   Wrappers to guarantee clean Module:Goal terms.
+
+transaction(Goal) :-
+    '$transaction'(Goal).
+transaction(Goal, Constraint, Mutex) :-
+    '$transaction'(Goal, Constraint, Mutex).
+snapshot(Goal) :-
+    '$snapshot'(Goal).
+
 
 %!  '$wrap_predicate'(:Head, +Name, -Closure, -Wrapped, +Body) is det.
 %

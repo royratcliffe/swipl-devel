@@ -509,9 +509,11 @@ lock_files(_) :-
 %   Save the program itself as virtual machine code to Zipper.
 
 save_program(RC, SaveClass, Options) :-
-    zipper_open_new_file_in_zip(RC, '$prolog/state.qlf', StateFd, []),
     setup_call_cleanup(
-        ( current_prolog_flag(access_level, OldLevel),
+        ( zipper_open_new_file_in_zip(RC, '$prolog/state.qlf', StateFd,
+                                      [ zip64(true)
+                                      ]),
+          current_prolog_flag(access_level, OldLevel),
           set_prolog_flag(access_level, system), % generate system modules
           '$open_wic'(StateFd, Options)
         ),
@@ -526,9 +528,9 @@ save_program(RC, SaveClass, Options) :-
           save_format_predicates
         ),
         ( '$close_wic',
-          set_prolog_flag(access_level, OldLevel)
-        )),
-    close(StateFd).
+          set_prolog_flag(access_level, OldLevel),
+          close(StateFd)
+        )).
 
 
                  /*******************************
@@ -845,6 +847,7 @@ no_save_flag(tty_control).
 no_save_flag(readline).
 no_save_flag(associated_file).
 no_save_flag(cpu_count).
+no_save_flag(tmp_dir).
 no_save_flag(hwnd).                     % should be read-only, but comes
                                         % from user-code
 
@@ -1194,7 +1197,7 @@ ignored(File, Options) :-
          ->  member(Pattern, Patterns)
          ;   Pattern = Patterns
          ),
-         wildcard_match(Pattern, File)
+         glob_match(Pattern, File)
        ),
     !.
 ignored(File, Options) :-
@@ -1203,8 +1206,15 @@ ignored(File, Options) :-
     ->  member(Pattern, Patterns)
     ;   Pattern = Patterns
     ),
-    wildcard_match(Pattern, File),
+    glob_match(Pattern, File),
     !.
+
+glob_match(Pattern, File) :-
+    current_prolog_flag(file_name_case_handling, case_sensitive),
+    !,
+    wildcard_match(Pattern, File).
+glob_match(Pattern, File) :-
+    wildcard_match(Pattern, File, [case_sensitive(false)]).
 
 
                 /********************************

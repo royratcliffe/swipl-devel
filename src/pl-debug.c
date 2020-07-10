@@ -3,7 +3,7 @@
     Author:        Keri Harris
     E-mail:        keri.harris@securitease.com
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2019, University of Amsterdam
+    Copyright (c)  2011-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -93,6 +93,7 @@ const debug_topic debug_topics[] =
   DEBUG_TOPIC(MSG_INFERENCE_LIMIT),
   DEBUG_TOPIC(MSG_NSOLS),
   DEBUG_TOPIC(MSG_SRCFILE),
+  DEBUG_TOPIC(MSG_SRCFILE_REF),
   DEBUG_TOPIC(MSG_DESTROY_MODULE),
   DEBUG_TOPIC(MSG_CREATE_MODULE),
   DEBUG_TOPIC(MSG_QUEUE_GC),
@@ -209,6 +210,11 @@ const debug_topic debug_topics[] =
   DEBUG_TOPIC(TABLING_NO_EARLY_COMPLETION),
   DEBUG_TOPIC(TABLING_NO_SIMPLIFY),
   DEBUG_TOPIC(TABLING_NO_AC),
+
+  DEBUG_TOPIC(MSG_THREAD_WAIT),
+
+  DEBUG_TOPIC(MSG_TRANSACTION),
+  DEBUG_TOPIC(MSG_COMMIT),
 
   DEBUG_TOPIC(CHK_SECURE),
   DEBUG_TOPIC(CHK_HIGH_ARITY),

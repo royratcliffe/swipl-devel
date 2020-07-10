@@ -155,10 +155,7 @@ non_terminal(Spec)       :- '$set_pattr'(Spec, pred, non_terminal(true)).
 '$set_pattr'(PI, M, _, []) :-
     !,
     '$pi_head'(M:PI, Pred),
-    (   '$get_predicate_attribute'(Pred, incremental, 1)
-    ->  '$wrap_incremental'(Pred)
-    ;   '$unwrap_incremental'(Pred)
-    ).
+    '$set_table_wrappers'(Pred).
 '$set_pattr'(A, M, How, [O|OT]) :-
     !,
     '$set_pattr'(A, M, How, O),
@@ -205,6 +202,7 @@ non_terminal(Spec)       :- '$set_pattr'(Spec, pred, non_terminal(true)).
     '$append'(Attrs0, [Attr], Attrs).
 
 '$attr_option'(incremental, incremental(true)).
+'$attr_option'(monotonic, monotonic(true)).
 '$attr_option'(opaque, incremental(false)).
 '$attr_option'(abstract(Level0), abstract(Level)) :-
     '$table_option'(Level0, Level).
@@ -1679,16 +1677,14 @@ compiling :-
 '$open_source'(Path, In, _Options) :-
     open(Path, read, In).
 
-'$close_source'(close(In, Id, Ref), Message) :-
+'$close_source'(close(In, _Id, Ref), Message) :-
     erase(Ref),
-    '$end_consult'(Id),
     call_cleanup(
         close(In),
         '$pop_input_context'),
     '$close_message'(Message).
-'$close_source'(restore(In, StreamState, Id, Ref, Opts), Message) :-
+'$close_source'(restore(In, StreamState, _Id, Ref, Opts), Message) :-
     erase(Ref),
-    '$end_consult'(Id),
     call_cleanup(
         '$restore_load_stream'(In, StreamState, Opts),
         '$pop_input_context'),
@@ -2086,6 +2082,10 @@ load_files(Module:Files, Options) :-
 '$noload'(true, _, _) :-
     !,
     fail.
+'$noload'(_, FullFile, _Options) :-
+    '$time_source_file'(FullFile, Time, system),
+    Time > 0.0,
+    !.
 '$noload'(not_loaded, FullFile, _) :-
     source_file(FullFile),
     !.
@@ -2235,16 +2235,13 @@ load_files(Module:Files, Options) :-
     memberchk(stream(_), Options),
     !,
     '$assert_load_context_module'(File, Module, Options),
-    '$qdo_load_file'(File, File, Module, Action, Options),
-    '$run_initialization'(File, Action, Options).
+    '$qdo_load_file'(File, File, Module, Options).
 '$load_file'(File, Module, Options) :-
-    '$resolved_source_path'(File, FullFile, Options),
-    !,
-    '$already_loaded'(File, FullFile, Module, Options).
-'$load_file'(File, Module, Options) :-
-    '$resolve_source_path'(File, FullFile, Options),
-    '$mt_load_file'(File, FullFile, Module, Options),
-    '$register_resource_file'(FullFile).
+    (   '$resolved_source_path'(File, FullFile, Options)
+    ->  true
+    ;   '$resolve_source_path'(File, FullFile, Options)
+    ),
+    '$mt_load_file'(File, FullFile, Module, Options).
 
 %!  '$resolved_source_path'(+File, -FullFile, +Options) is semidet.
 %
@@ -2357,8 +2354,7 @@ load_files(Module:Files, Options) :-
     !,
     '$already_loaded'(File, FullFile, Module, Options).
 '$mt_load_file'(File, FullFile, Module, Options) :-
-    '$qdo_load_file'(File, FullFile, Module, Action, Options),
-    '$run_initialization'(FullFile, Action, Options).
+    '$qdo_load_file'(File, FullFile, Module, Options).
 
 '$mt_start_load'(FullFile, queue(Queue), _) :-
     '$loading_file'(FullFile, Queue, LoadThread),
@@ -2382,8 +2378,7 @@ load_files(Module:Files, Options) :-
     '$already_loaded'(File, FullFile, Module, Options).
 '$mt_do_load'(_Ref, File, FullFile, Module, Options) :-
     '$assert_load_context_module'(FullFile, Module, Options),
-    '$qdo_load_file'(File, FullFile, Module, Action, Options),
-    '$run_initialization'(FullFile, Action, Options).
+    '$qdo_load_file'(File, FullFile, Module, Options).
 
 '$mt_end_load'(queue(_)) :- !.
 '$mt_end_load'(already_loaded) :- !.
@@ -2398,7 +2393,12 @@ load_files(Module:Files, Options) :-
 %
 %   Switch to qcompile mode if requested by the option '$qlf'(+Out)
 
-'$qdo_load_file'(File, FullFile, Module, Action, Options) :-
+'$qdo_load_file'(File, FullFile, Module, Options) :-
+    '$qdo_load_file2'(File, FullFile, Module, Action, Options),
+    '$register_resource_file'(FullFile),
+    '$run_initialization'(FullFile, Action, Options).
+
+'$qdo_load_file2'(File, FullFile, Module, Action, Options) :-
     memberchk('$qlf'(QlfOut), Options),
     '$stage_file'(QlfOut, StageQlf),
     !,
@@ -2407,7 +2407,7 @@ load_files(Module:Files, Options) :-
         '$do_load_file'(File, FullFile, Module, Action, Options),
         Catcher,
         '$qend'(State, Catcher, StageQlf, QlfOut)).
-'$qdo_load_file'(File, FullFile, Module, Action, Options) :-
+'$qdo_load_file2'(File, FullFile, Module, Action, Options) :-
     '$do_load_file'(File, FullFile, Module, Action, Options).
 
 '$qstart'(Qlf, Module, state(OldMode, OldModule)) :-
@@ -2689,19 +2689,16 @@ load_files(Module:Files, Options) :-
 '$consult_file_2'(Absolute, Module, What, LM, Options) :-
     '$set_source_module'(OldModule, Module),
     '$load_id'(Absolute, Id, Modified, Options),
-    '$start_consult'(Id, Modified),
-    (   '$derived_source'(Absolute, DerivedFrom, _)
-    ->  '$modified_id'(DerivedFrom, DerivedModified, Options),
-        '$start_consult'(DerivedFrom, DerivedModified)
-    ;   true
-    ),
     '$compile_type'(What),
     '$save_lex_state'(LexState, Options),
     '$set_dialect'(Options),
-    call_cleanup('$load_file'(Absolute, Id, LM, Options),
-                 '$end_consult'(LexState, OldModule)).
+    setup_call_cleanup(
+        '$start_consult'(Id, Modified),
+        '$load_file'(Absolute, Id, LM, Options),
+        '$end_consult'(Id, LexState, OldModule)).
 
-'$end_consult'(LexState, OldModule) :-
+'$end_consult'(Id, LexState, OldModule) :-
+    '$end_consult'(Id),
     '$restore_lex_state'(LexState),
     '$set_source_module'(OldModule).
 
@@ -2863,7 +2860,8 @@ load_files(Module:Files, Options) :-
         ;   '$compile_term'(Term, Layout, Id)
         ),
         arg(4, State, true)
-    ;   '$end_load_file'(State)
+    ;   '$fixup_reconsult'(Id),
+        '$end_load_file'(State)
     ),
     !,
     arg(2, State, Module).
@@ -3111,19 +3109,28 @@ load_files(Module:Files, Options) :-
 
 %!  '$module_class'(+File, -Class, -Super) is det.
 %
-%   Determine the initial module from which   I  inherit. All system
-%   and library modules inherit from =system=, while all normal user
-%   modules inherit from =user=.
+%   Determine  the  file  class  and  initial  module  from  which  File
+%   inherits. All boot and library modules  as   well  as  the -F script
+%   files inherit from `system`, while all   normal user modules inherit
+%   from `user`.
 
 '$module_class'(File, Class, system) :-
     current_prolog_flag(home, Home),
     sub_atom(File, 0, Len, _, Home),
-    !,
     (   sub_atom(File, Len, _, _, '/boot/')
     ->  Class = system
-    ;   Class = library
-    ).
+    ;   '$lib_prefix'(Prefix),
+        sub_atom(File, Len, _, _, Prefix)
+    ->  Class = library
+    ;   file_directory_name(File, Home),
+        file_name_extension(_, rc, File)
+    ->  Class = library
+    ),
+    !.
 '$module_class'(_, user, user).
+
+'$lib_prefix'('/library').
+'$lib_prefix'('/xpce/prolog/lib/').
 
 '$check_export'(Module) :-
     '$undefined_export'(Module, UndefList),

@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2012, University of Amsterdam
+    Copyright (c)  2011-2020, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -39,6 +40,7 @@
 
 #include "pl-incl.h"
 #include "pl-ctype.h"
+#include "os/pl-utf8.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -76,8 +78,6 @@
 #define IS_DIR_SEPARATOR(c)	((c) == '/')
 #endif
 
-#define char_to_int(c)	(0xff & (int)(c))
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Unix Wildcard Matching.  Recognised:
 
@@ -102,68 +102,88 @@ intermediate representation:
 
 #define MAXCODE 1024
 
-#define ANY	128
-#define STAR	129
-#define ALT	130
-#define JMP	131
-#define ANYOF	132
-#define EXIT	133
+#define CBASE	 0x80000000
+#define ANY	 (CBASE+1)
+#define STAR	 (CBASE+2)
+#define ALT	 (CBASE+3)
+#define JMP	 (CBASE+4)
+#define ANYOF	 (CBASE+5)
+#define ANYRANGE (CBASE+6)
+#define EXIT	 (CBASE+7)
 
 #define NOCURL	0
 #define CURL	1
 
-typedef unsigned char matchcode;
+#define M_IGNCASE	0x01
+
+typedef unsigned int matchcode;
 
 typedef struct
-{ int		size;
-  matchcode	code[MAXCODE];
+{ tmp_buffer	pattern;
 } compiled_pattern;
 
-static char	*compile_pattern(compiled_pattern *, char *, int);
-static bool	match_pattern(matchcode *, char *);
+static char *compile_pattern(compiled_pattern *pattern, char *s,
+			     int curl, int flags);
+static int match_pattern(matchcode *pattern, char *s, int flags);
 
-#define Output(c)	{ if ( Out->size > MAXCODE-1 ) \
-			  { warning("pattern too large"); \
-			    return (char *) NULL; \
-			  } \
-			  Out->code[Out->size++] = c; \
-			}
+#define Output(c)  addBuffer(&Out->pattern, c, matchcode)
+#define Here()	   entriesBuffer(&Out->pattern, matchcode)
+#define CodeAt(o)  (baseBuffer(&Out->pattern, matchcode)[o])
 
-static inline void
-setMap(matchcode *map, int c)
-{ GET_LD
-
-  if ( !truePrologFlag(PLFLAG_FILE_CASE) )
-    c = makeLower(c);
-
-  map[(c)/8] |= 1 << ((c) % 8);
+static void
+initPattern(compiled_pattern *cbuf)
+{ initBuffer(&cbuf->pattern);
 }
 
-
-static bool
-compilePattern(char *p, compiled_pattern *cbuf)
-{ cbuf->size = 0;
-  if ( compile_pattern(cbuf, p, NOCURL) == (char *) NULL )
-    fail;
-
-  succeed;
+static void
+discardPattern(compiled_pattern *cbuf)
+{ discardBuffer(&cbuf->pattern);
+  initBuffer(&cbuf->pattern);
 }
 
+static int
+compilePattern(char *p, compiled_pattern *cbuf, int flags)
+{ initPattern(cbuf);
+
+  if ( compile_pattern(cbuf, p, NOCURL, flags) )
+    return TRUE;
+
+  discardPattern(cbuf);
+  return FALSE;
+}
+
+static int
+utf8_peek(char *p, int n)
+{ int c;
+
+  while(n-- > 0)
+    p = utf8_skip_char(p);
+
+  utf8_get_char(p, &c);
+
+  return c;
+}
 
 static char *
-compile_pattern(compiled_pattern *Out, char *p, int curl)
+compile_pattern(compiled_pattern *Out, char *p, int curl, int mflags)
 { int c;
 
   for(;;)
-  { switch(c = char_to_int(*p++))
+  { p = utf8_get_char(p, &c);
+
+    switch(c)
     { case EOS:
+	p--;
 	break;
       case '\\':
-	Output(*p == EOS ? '\\' : (*p & 0x7f));
-	if (*p == EOS )
+      { int c2;
+
+	p = utf8_get_char(p, &c2);
+	Output(c2 == EOS ? c : c2);
+	if ( c2 == EOS )
 	  break;
-	p++;
 	continue;
+      }
       case '?':
 	Output(ANY);
 	continue;
@@ -171,82 +191,92 @@ compile_pattern(compiled_pattern *Out, char *p, int curl)
 	Output(STAR);
 	continue;
       case '[':
-	{ matchcode *map;
-	  int n;
+      { size_t mapsize_at;
 
-	  Output(ANYOF);
-	  map = &Out->code[Out->size];
-	  Out->size += 16;
-	  if ( Out->size >= MAXCODE )
-	  { warning("Pattern too long");
-	    return (char *) NULL;
-	  }
+	Output(ANYOF);
+	mapsize_at = Here();
+	Output(0);
 
-	  for( n=0; n < 16; n++)
-	    map[n] = 0;
+	for(;;)
+	{ int cn;
 
-	  for(;;)
-	  { switch( c = *p++ )
-	    { case '\\':
-		if ( *p == EOS )
-		{ warning("Unmatched '['");
-		  return (char *)NULL;
-		}
-		setMap(map, *p);
-		p++;
-		continue;
-	      case ']':
-		break;
-	      default:
-		if ( p[-1] != ']' && p[0] == '-' && p[1] != ']' )
-		{ int chr;
+	  p = utf8_get_char(p, &c);
+	  utf8_get_char(p, &cn);
 
-		  for ( chr=p[-1]; chr <= p[1]; chr++ )
-		    setMap(map, chr);
-		  p += 2;
-		} else
-		  setMap(map, c);
-		continue;
+	  switch( c )
+	  { case EOS:
+	      return PL_syntax_error("Unmatched '['", NULL),NULL;
+	    case '\\':
+	    { int c2;
+
+	      p = utf8_get_char(p, &c2);
+	      if ( c2 == EOS )
+		return PL_syntax_error("Unmatched '['", NULL),NULL;
+	      Output(c2);
+	      continue;
 	    }
-	    break;
-	  }
+	    case ']':
+	    { size_t sz = Here();
 
-	  continue;
-	}
-      case '{':
-	{ int ai, aj = -1;
-
-	  for(;;)
-	  { Output(ALT); ai = Out->size; Output(0);
-	    if ( (p = compile_pattern(Out, p, CURL)) == (char *) NULL )
-	      return (char *) NULL;
-	    if ( aj > 0 )
-	      Out->code[aj] = Out->size - aj;
-	    if ( *p == ',' )
-	    { Output(JMP); aj = Out->size; Output(0);
-	      Out->code[ai] = Out->size - ai;
-	      Output(ALT); ai = Out->size; Output(0);
-	      p++;
-	    } else if ( *p == '}' )
-	    { p++;
+	      sz -= mapsize_at+1;
+	      CodeAt(mapsize_at) = sz;
 	      break;
-	    } else
-	    { warning("Unmatched '{'");
-	      return (char *) NULL;
+	    }
+	    default:
+	    { int ce;
+
+	      if ( c != ']' &&
+		   utf8_peek(p, 0) == '-' &&
+		   (ce=utf8_peek(p, 1)) != ']' )
+	      { Output(ANYRANGE);
+		Output(c);
+		Output(ce);
+		p = utf8_skip_char(p);
+		p = utf8_skip_char(p);
+	      } else
+		Output(c);
+	      continue;
 	    }
 	  }
-
-	  continue;
+	  break;
 	}
+
+	continue;
+      }
+      case '{':
+      { int ai, aj = -1;
+
+	for(;;)
+	{ Output(ALT); ai = Here(); Output(0);
+	  if ( !(p = compile_pattern(Out, p, CURL, mflags)) )
+	    return NULL;
+	  if ( aj > 0 )
+	    CodeAt(aj) = Here() - aj;
+	  if ( *p == ',' )
+	  { Output(JMP); aj = Here(); Output(0);
+	    CodeAt(ai) = Here() - ai;
+	    Output(ALT); ai = Here(); Output(0);
+	    p++;
+	  } else if ( *p == '}' )
+	  { p++;
+	    break;
+	  } else
+	  { return PL_syntax_error("Unmatched '{'", NULL),NULL;
+	  }
+	}
+
+	continue;
+      }
       case ANY:
       case STAR:
       case ALT:
       case JMP:
       case ANYOF:
+      case ANYRANGE:
       case EXIT:
-	PL_error(NULL, 0, "Reserved character",
-		 ERR_REPRESENTATION, ATOM_pattern);
-	return NULL;
+	assert(0);
+	return PL_error(NULL, 0, "Reserved character",
+			ERR_REPRESENTATION, ATOM_pattern),NULL;
       case '}':
       case ',':
 	if ( curl == CURL )
@@ -255,13 +285,10 @@ compile_pattern(compiled_pattern *Out, char *p, int curl)
 	}
 	/*FALLTHROUGH*/
       default:
-      { GET_LD
-
-        if ( !truePrologFlag(PLFLAG_FILE_CASE) )
-	  c = makeLower(c);
+	if ( (mflags&M_IGNCASE) )
+	  c = makeLowerW(c);
 	Output(c);
 	continue;
-      }
     }
 
     Output(EXIT);
@@ -270,86 +297,135 @@ compile_pattern(compiled_pattern *Out, char *p, int curl)
 }
 
 
-static inline bool
-matchPattern(char *s, compiled_pattern *cbuf)
-{ return match_pattern(cbuf->code, s);
+static int
+matchPattern(char *s, compiled_pattern *cbuf, int flags)
+{ return match_pattern(baseBuffer(&cbuf->pattern, matchcode), s, flags);
 }
 
-
 static bool
-match_pattern(matchcode *p, char *str)
+match_pattern(matchcode *p, char *s, int flags)
 { matchcode c;
-  matchcode *s = (matchcode *) str;
 
   for(;;)
   { switch( c = *p++ )
     { case EXIT:
-	  return (*s == EOS ? TRUE : FALSE);
+	return (*s == EOS ? TRUE : FALSE);
       case ANY:						/* ? */
-	  if ( *s == EOS )
-	    fail;
-	  s++;
-	  continue;
+	if ( *s == EOS )
+	  return FALSE;
+	s = utf8_skip_char(s);
+	continue;
       case ANYOF:					/* [...] */
-        { GET_LD
-	  matchcode c2 = *s;
+      { int c2;
+	int sz = *p++;
+	matchcode *anyend = &p[sz];
 
-	  if ( !truePrologFlag(PLFLAG_FILE_CASE) )
-	    c2 = makeLower(c2);
+	s = utf8_get_char(s, &c2);
+	if ( (flags&M_IGNCASE) )
+	  c2 = makeLowerW(c2);
 
-	  if ( p[c2 / 8] & (1 << (c2 % 8)) )
-	  { p += 16;
-	    s++;
-	    continue;
+	while(p<anyend)
+	{ if ( *p == ANYRANGE )
+	  { if ( c2 >= p[1] && c2 <= p[2] )
+	      goto match;
+	    p += 3;
+	  } else
+	  { if ( *p == c2 )
+	      goto match;
+	    p++;
 	  }
-	  fail;
 	}
-      case STAR:					/* * */
-	  do
-	  { if ( match_pattern(p, (char *)s) )
-	      succeed;
-	  } while( *s++ );
-	  fail;
-      case JMP:						/* { ... } */
-	  p += *p;
-	  continue;
-      case ALT:
-	  if ( match_pattern(p+1, (char *)s) )
-	    succeed;
-	  p += *p;
-	  continue;
-      default:						/* character */
-      { GET_LD
+	return FALSE;
 
-	  if ( c == *s ||
-	       (!truePrologFlag(PLFLAG_FILE_CASE) && c == makeLower(*s)) )
-	  { s++;
-	    continue;
-	  }
-          fail;
+      match:
+	p = anyend;
+	continue;
+      }
+      case STAR:					/* * */
+      { int c2;
+	do
+	{ if ( match_pattern(p, s, flags) )
+	    return TRUE;
+	  s = utf8_get_char(s, &c2);
+	} while(c2);
+
+	return FALSE;
+      }
+      case JMP:						/* { ... } */
+	p += *p;
+        continue;
+      case ALT:
+	if ( match_pattern(p+1, s, flags) )
+	  return TRUE;
+        p += *p;
+	continue;
+      default:						/* character */
+      { int c2;
+
+	s = utf8_get_char(s, &c2);
+	if ( (flags&M_IGNCASE) )
+	  c2 = makeLowerW(c2);
+
+	if ( c == c2 )
+	  continue;
+
+	return FALSE;
       }
     }
   }
 }
 
 
-/** wildcard_match(+Pattern, +Name) is semidet.
+/** wildcard_match(+Pattern, +Name [, +Options]) is semidet.
 */
+
+static const opt_spec wildcard_options[] =
+{ { ATOM_case_sensitive,    OPT_BOOL },
+  { NULL_ATOM,		    0 }
+};
+
+
+static int
+wildcard_match(term_t pattern, term_t string, term_t options ARG_LD)
+{ char *p, *s;
+  int rc = FALSE;
+  int mflags = 0;
+  int case_sensitive = TRUE;
+
+  if ( options &&
+       !scan_options(options, 0, ATOM_wildcard_option,
+		     wildcard_options, &case_sensitive) )
+    return FALSE;
+  if ( !case_sensitive )
+    mflags |= M_IGNCASE;
+
+  PL_STRINGS_MARK();
+  if ( PL_get_chars(pattern, &p, CVT_ALL|REP_UTF8|CVT_EXCEPTION) &&
+       PL_get_chars(string,  &s, CVT_ALL|REP_UTF8|CVT_EXCEPTION) )
+  { compiled_pattern buf;
+
+    if ( (rc=compilePattern(p, &buf, mflags)) )
+    { rc = matchPattern(s, &buf, mflags);
+      discardPattern(&buf);
+    }
+  }
+  PL_STRINGS_RELEASE();
+
+  return rc;
+}
 
 static
 PRED_IMPL("wildcard_match", 2, wildcard_match, 0)
-{ char *p, *s;
-  compiled_pattern buf;
+{ PRED_LD
 
-  if ( !PL_get_chars(A1, &p, CVT_ALL|CVT_EXCEPTION) ||
-       !PL_get_chars(A2,  &s, CVT_ALL|CVT_EXCEPTION) )
-    fail;
+  return wildcard_match(A1, A2, 0 PASS_LD);
+}
 
-  if ( compilePattern(p, &buf) )
-  { return matchPattern(s, &buf);
-  }
+static
+PRED_IMPL("wildcard_match", 3, wildcard_match, 0)
+{ PRED_LD
 
-  return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_pattern, A1);
+  return wildcard_match(A1, A2, A3 PASS_LD);
 }
 
 
@@ -379,6 +455,7 @@ Finally we sort the result.
 typedef struct
 { tmp_buffer	files;			/* our files */
   tmp_buffer	strings;		/* our strings */
+  compiled_pattern pattern;		/* Pattern buffer */
   int		start;			/* 1-st valid entry of files */
   int		end;			/* last valid entry of files */
 } glob_info, *GlobInfo;
@@ -391,11 +468,35 @@ static void
 free_expand_info(GlobInfo info)
 { discardBuffer(&info->files);
   discardBuffer(&info->strings);
+  discardPattern(&info->pattern);
 }
 
 
 static void
-add_path(const char *path, GlobInfo info)
+mb_add_path(const char *path, GlobInfo info ARG_LD)
+{ int idx = (int)entriesBuffer(&info->strings, char);
+  PL_chars_t txt;
+
+  PL_STRINGS_MARK();
+  txt.text.t    = (char*)path;
+  txt.length    = strlen(path);
+  txt.encoding  = ENC_ANSI;
+  txt.storage   = PL_CHARS_HEAP;
+  txt.canonical = FALSE;
+  if ( PL_canonicalise_text(&txt) &&
+       PL_mb_text(&txt, REP_UTF8) )
+  { addMultipleBuffer(&info->strings, txt.text.t, txt.length+1, char);
+    addBuffer(&info->files, idx, int);
+    info->end++;
+  } else
+  { assert(0);
+  }
+  PL_free_text(&txt);
+  PL_STRINGS_RELEASE();
+}
+
+static void
+utf8_add_path(const char *path, GlobInfo info)
 { int idx = (int)entriesBuffer(&info->strings, char);
   size_t n = strlen(path)+1;
 
@@ -403,7 +504,6 @@ add_path(const char *path, GlobInfo info)
   addBuffer(&info->files, idx, int);
   info->end++;
 }
-
 
 static const char *
 expand_str(GlobInfo info, int at)
@@ -433,20 +533,67 @@ un_escape(char *to, const char *from, const char *end)
 
 
 static int
+utf8_exists_file(const char *name ARG_LD)
+{ PL_chars_t txt;
+  int rc;
+
+  PL_STRINGS_MARK();
+  txt.text.t    = (char*)name;
+  txt.length    = strlen(name);
+  txt.encoding  = ENC_UTF8;
+  txt.storage   = PL_CHARS_HEAP;
+  txt.canonical = FALSE;
+  rc = ( PL_canonicalise_text(&txt) &&
+	 PL_mb_text(&txt, REP_MB) &&
+	 AccessFile(txt.text.t, ACCESS_EXIST) );
+  PL_free_text(&txt);
+  PL_STRINGS_RELEASE();
+
+  return rc;
+}
+
+static DIR*
+utf8_opendir(const char *name ARG_LD)
+{ PL_chars_t txt;
+  DIR *rc;
+
+  PL_STRINGS_MARK();
+  txt.text.t    = (char*)name;
+  txt.length    = strlen(name);
+  txt.encoding  = ENC_UTF8;
+  txt.storage   = PL_CHARS_HEAP;
+  txt.canonical = FALSE;
+  if ( PL_canonicalise_text(&txt) &&
+       PL_mb_text(&txt, REP_MB) )
+    rc = opendir(txt.text.t);
+  else
+    rc = NULL;
+  PL_free_text(&txt);
+  PL_STRINGS_RELEASE();
+
+  return rc;
+}
+
+static int
 expand(const char *pattern, GlobInfo info)
-{ const char *pat = pattern;
-  compiled_pattern cbuf;
+{ GET_LD
+  const char *pat = pattern;
   char prefix[MAXPATHLEN];		/* before first pattern */
   char patbuf[MAXPATHLEN];		/* pattern buffer */
   size_t prefix_len;
   int end, dot;
+  int mflags = 0;
+
+  if ( !truePrologFlag(PLFLAG_FILE_CASE) )
+    mflags |= M_IGNCASE;
 
   initBuffer(&info->files);
   initBuffer(&info->strings);
+  initPattern(&info->pattern);
   info->start = 0;
   info->end = 0;
 
-  add_path("", info);
+  utf8_add_path("", info);
 
   for(;;)
   { const char *s = pat, *head = pat, *tail;
@@ -473,12 +620,12 @@ expand(const char *pattern, GlobInfo info)
 		if ( prefix[0] && plen > 0 && path[plen-1] != '/' )
 		  path[plen++] = '/';
 		strcpy(&path[plen], prefix);
-		if ( end == 1 || AccessFile(path, ACCESS_EXIST) )
-		  add_path(path, info);
+		if ( end == 1 || utf8_exists_file(path PASS_LD) )
+		  utf8_add_path(path, info);
 	      }
 	    }
 	  }
-	  succeed;
+	  return TRUE;
 	case '[':				/* meta characters: expand */
 	case '{':
 	case '?':
@@ -512,8 +659,9 @@ expand(const char *pattern, GlobInfo info)
     un_escape(patbuf, head, tail);
     prefix_len = strlen(prefix);
 
-    if ( !compilePattern(patbuf, &cbuf) )	/* syntax error */
-      fail;
+    discardPattern(&info->pattern);
+    if ( !compilePattern(patbuf, &info->pattern, mflags) ) /* syntax error */
+      return FALSE;
     dot = (patbuf[0] == '.');			/* do dots as well */
 
     end = info->end;
@@ -532,7 +680,7 @@ expand(const char *pattern, GlobInfo info)
       strcpy(path, current);
       strcpy(&path[clen], prefix);
 
-      if ( (d=opendir(path[0] ? OsPath(path, tmp) : ".")) )
+      if ( (d=utf8_opendir((path[0] ? OsPath(path, tmp) : ".") PASS_LD)) )
       { size_t plen = clen+prefix_len;
 
 	if ( plen > 0 && path[plen-1] != '/' )
@@ -544,13 +692,13 @@ expand(const char *pattern, GlobInfo info)
 	  strlwr(e->d_name);
 #endif
 	  if ( (dot || e->d_name[0] != '.') &&
-	       matchPattern(e->d_name, &cbuf) )
+	       matchPattern(e->d_name, &info->pattern, mflags) )
 	  { char newp[MAXPATHLEN];
 
 	    if ( plen+strlen(e->d_name)+1 < sizeof(newp) )
 	    { strcpy(newp, path);
 	      strcpy(&newp[plen], e->d_name);
-	      add_path(newp, info);
+	      mb_add_path(newp, info PASS_LD);
 	    }
 	  }
 	}
@@ -604,7 +752,7 @@ PRED_IMPL("expand_file_name", 2, expand_file_name, 0)
   term_t head = PL_new_term_ref();
   int i;
 
-  if ( !PL_get_chars(A1, &s, CVT_ALL|REP_FN|CVT_EXCEPTION) )
+  if ( !PL_get_chars(A1, &s, CVT_ALL|REP_UTF8|CVT_EXCEPTION) )
     fail;
   if ( strlen(s) > sizeof(spec)-1 )
     return PL_error(NULL, 0, NULL, ERR_REPRESENTATION,
@@ -620,18 +768,18 @@ PRED_IMPL("expand_file_name", 2, expand_file_name, 0)
   { const char *e = expand_entry(&info, i);
 
     if ( !PL_unify_list(l, head, l) ||
-	 !PL_unify_chars(head, PL_ATOM|REP_FN, -1, e) )
+	 !PL_unify_chars(head, PL_ATOM|REP_UTF8, -1, e) )
       goto failout;
   }
 
   if ( !PL_unify_nil(l) )
   { failout:
     free_expand_info(&info);
-    fail;
+    return FALSE;
   }
 
   free_expand_info(&info);
-  succeed;
+  return TRUE;
 }
 
 
@@ -680,5 +828,6 @@ PRED_IMPL("directory_files", 2, directory_files, 0)
 BeginPredDefs(glob)
   PRED_DEF("expand_file_name", 2, expand_file_name, 0)
   PRED_DEF("wildcard_match",   2, wildcard_match,   0)
+  PRED_DEF("wildcard_match",   3, wildcard_match,   0)
   PRED_DEF("directory_files",  2, directory_files,  0)
 EndPredDefs

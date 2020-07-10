@@ -5455,8 +5455,10 @@ time).
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
-markAtomsOnStacks(PL_local_data_t *ld)
-{ assert(!ld->gc.status.active);
+markAtomsOnStacks(PL_local_data_t *ld, void *ctx)
+{ (void)ctx;
+
+  assert(!ld->gc.status.active);
 
   if ( !ld->magic )
     return;				/* avoid AGC on finished threads */
@@ -5508,9 +5510,20 @@ don't care.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
-markPredicatesInEnvironments(PL_local_data_t *ld)
+markPredicatesInEnvironments(PL_local_data_t *ld, void *ctx)
 { GET_LD
   Word lbase, lend, current;
+
+  if ( ld->transaction.gen_start )
+  { Buffer tr_starts = ctx;
+
+    for_table(GD->procedures.dirty, n, v,
+	      { DirtyDefInfo ddi = v;
+
+		ddi_add_access_gen(ddi, ld->transaction.gen_start);
+	      });
+    addBuffer(tr_starts, ld->transaction.generation, gen_t);
+  }
 
   lbase = (Word)ld->stacks.local.base;
   lend  = (Word)ld->stacks.local.top;		/* see (*) */

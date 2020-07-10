@@ -154,7 +154,7 @@ initWamTable(void)
   }
   for(n = 0; n < I_HIGHEST; n++)
   { int index = wam_table[n]-dewam_table_offset;
-    if ( dewam_table[index] )		/* See SEPERATE_VMI */
+    if ( dewam_table[index] )		/* See SEPARATE_VMI */
       fatalError("WAM Table mismatch: wam_table[%d(%s)] == wam_table[%d(%s)]\n",
 		 dewam_table[index], codeTable[dewam_table[index]].name,
 		 n,		     codeTable[n].name);
@@ -1605,7 +1605,7 @@ int
 compileClause(Clause *cp, Word head, Word body,
 	      Procedure proc, Module module, term_t warnings ARG_LD)
 { compileInfo ci;			/* data base for the compiler */
-  struct clause clause;
+  struct clause clause = {0};
   Clause cl;
   Definition def = getProcDefinition(proc);
   int rc;
@@ -1615,7 +1615,6 @@ compileClause(Clause *cp, Word head, Word body,
     ci.subclausearg = 0;
     ci.arity        = (int)def->functor->arity;
     ci.argvars      = 0;
-    clause.flags    = 0;
   } else
   { Word g = varFrameP(lTop, VAROFFSET(1));
 
@@ -1629,10 +1628,6 @@ compileClause(Clause *cp, Word head, Word body,
   }
 
   clause.predicate  = def;
-  clause.code_size  = 0;
-  clause.source_no  = clause.line_no = 0;
-  clause.owner_no   = 0;
-  clause.references = 0;
 
   ci.clause = &clause;
   ci.module = module;
@@ -3764,7 +3759,8 @@ takes care of reconsult, redefinition, etc.
     clause->owner_no  = of->index;
 
     if ( !overruleImportedProcedure(proc, mhead) )
-    { freeClause(clause);
+    { error:
+      freeClause(clause);
       return NULL;
     }
     def = getProcDefinition(proc);	/* may be changed */
@@ -3772,9 +3768,7 @@ takes care of reconsult, redefinition, etc.
     if ( proc != of->current_procedure )
     { if ( def->impl.any.defined )
       { if ( !redefineProcedure(proc, of, 0) )
-	{ freeClause(clause);
-	  return NULL;
-	}
+	  goto error;
       }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3813,14 +3807,12 @@ mode, the predicate is still undefined and is not dynamic or multifile.
 			    PL_TERM, warnings);
 	PL_discard_foreign_frame(fid);
 	if ( !rc )
-	{ freeClause(clause);
-	  return NULL;
-	}
+	  clause = NULL;
       }
+    } else
+      clause = NULL;
 
-      return clause;
-    }
-    return NULL;
+    return clause;
   }
 
   /* assert[az]/1 */
@@ -3828,17 +3820,17 @@ mode, the predicate is still undefined and is not dynamic or multifile.
   if ( false(def, P_DYNAMIC) )
   { if ( isDefinedProcedure(proc) )
     { PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
-      goto error;
+    derror:
+      freeClause(clause);
+      return NULL;
     }
     if ( !setDynamicDefinition(def, TRUE) )
-      goto error;
+      goto derror;
   }
 
   if ( (cref=assertProcedure(proc, clause, where PASS_LD)) )
     return cref->value.clause;
 
-error:
-  freeClause(clause);
   return NULL;
 }
 
@@ -3976,10 +3968,9 @@ PRED_IMPL("$start_aux", 2, start_aux, 0)
   sf = lookupSourceFile(filename, TRUE);
   if ( (proc=sf->current_procedure) &&
        (def=proc->definition) )
-  { return unify_definition(NULL, A2, def, 0, GP_QUALIFY|GP_NAMEARITY);
-  }
-
-  return PL_unify_nil(A2);
+    return unify_definition(NULL, A2, def, 0, GP_QUALIFY|GP_NAMEARITY);
+  else
+    return PL_unify_nil(A2);
 }
 
 
@@ -3989,6 +3980,7 @@ PRED_IMPL("$end_aux", 2, end_aux, 0)
   atom_t filename;
   SourceFile sf;
   Procedure proc;
+  int rc = TRUE;
 
   if ( !PL_get_atom_ex(A1, &filename) )
     fail;
@@ -3998,14 +3990,14 @@ PRED_IMPL("$end_aux", 2, end_aux, 0)
   { sf->current_procedure = NULL;
   } else
   { if ( get_procedure(A2, &proc, 0, GP_NAMEARITY|GP_EXISTENCE_ERROR) )
-    { sf->current_procedure = proc;
-      succeed;
-    }
-
-    fail;
+      sf->current_procedure = proc;
+    else
+      rc = FALSE;
   }
+  releaseSourceFile(sf);
+  releaseSourceFile(sf);		/* for $start_aux/2 */
 
-  succeed;
+  return rc;
 }
 
 

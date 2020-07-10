@@ -189,9 +189,9 @@ it to \file{libpl.a} from the runtime directory and the libraries
 required by both the extensions and the SWI-Prolog kernel. This may be
 done by hand, or by using the \program{swipl-ld} utility described in
 \secref{plld}. If the linking is performed by hand, the command line
-option \const{-dump-runtime-variables} (see \secref{cmdline}) can be
-used to obtain the required paths, libraries and linking options to link
-the new executable.
+option \cmdlineoption{--dump-runtime-variables} (see \secref{cmdline})
+can be used to obtain the required paths, libraries and linking options
+to link the new executable.
 
 \section{Interface Data Types}		\label{sec:foreigntypes}
 
@@ -3828,7 +3828,7 @@ signals:
     after cleanup.
 \end{description}
 
-The \cmdlineoption{--nosignals} option can be used to inhibit all signal
+The \cmdlineoption{--no-signals} option can be used to inhibit all signal
 processing except for \const{SIGUSR2}. The handling of \const{SIGUSR2}
 is vital for dealing with blocking system call in threads. The used
 signal may be changed using the \cmdlineoption{--sigalert=NUM} option or
@@ -4303,44 +4303,6 @@ Release memory.  The \arg{mem} argument must be obtained from a
 previous PL_malloc() or PL_realloc() call.
 \end{description}
 
-\subsubsection{Boehm-GC support}
-\label{sec:boehm-gc}
-
-\begin{quote}
-This section is obsolete.  Although the Boehm-GC interfaces
-still exist, it turns out that the scalability is not good enough for
-SWI-Prolog. It is unlikely that SWI-Prolog will ever switch to
-Boehm-GC.
-\end{quote}
-
-\index{Boehm GC}%
-To accommodate future use of the Boehm garbage
-collector\footnote{\url{http://www.hpl.hp.com/personal/Hans_Boehm/gc/}}
-for heap memory allocation, the interface provides the functions
-described below. Foreign extensions that wish to use the Boehm-GC
-facilities can use these wrappers. Please note that if SWI-Prolog is
-not compiled to use Boehm-GC (default), the user is responsible for
-calling PL_free() to reclaim memory.
-
-\begin{description}
-    \cfunction{void*}{PL_malloc_atomic}{size_t bytes}
-    \nodescription
-    \cfunction{void*}{PL_malloc_uncollectable}{size_t bytes}
-    \nodescription
-    \cfunction{void*}{PL_malloc_atomic_uncollectable}{size_t bytes}
-If Boehm-GC is not used, these are all the same as PL_malloc().  With
-Boehm-GC, these map to the corresponding Boehm-GC functions.
-\jargon{Atomic} means that the content should not be scanned for
-pointers, and \jargon{uncollectable} means that the object should never
-be garbage collected.
-    \cfunction{void*}{PL_malloc_stubborn}{size_t bytes}
-    \nodescription
-    \cfunction{void}{PL_end_stubborn_change}{void *memory}
-These functions allow creating objects, promising GC that the content
-will not change after PL_end_stubborn_change().
-\end{description}
-
-
 \subsection{Compatibility between Prolog versions}
 \label{sec:foreign-compat}
 
@@ -4355,6 +4317,74 @@ use the macro \const{PLVERSION} to find the version of
 \const{PL_QUERY_VERSION} to find the version of the attached Prolog
 system. Both follow the same numbering schema explained with PL_query().
 
+
+\subsection{Foreign hash tables}
+\label{sec:foreign-hash-tables}
+
+As of SWI-Prolog 8.3.2 the foreign API provides access to the internal
+thread-safe and lock-free hash tables that associate pointers or objects
+that fit in a pointer such as atoms (\ctype{atom_t}). An argument
+against providing these functions is that they have little to do with
+Prolog. The argument in favor is that it is hard to implement efficient
+lock-free tables without low-level access to the underlying Prolog
+threads and exporting this interface has a low cost.
+
+The functions below \textbf{can only be called if the calling thread is
+associated with a Prolog thread}. Failure to do so causes the call to be
+ignored or return the failure code where applicable.
+
+\begin{description}
+    \cfunction{hash_table_t}{PL_new_hash_table}{int size,
+						void (*free_symbol)(void *n, void *v)}
+Create a new table for \arg{size} key-value pairs. The table is resized
+when needed. If you know the table will hold 10,000 key-value pairs,
+providing a suitable initial size avoids resizing.  The \arg{free_symbol}
+function is called whenever a key-value pair is removed from the table.
+This can be \const{NULL}.
+
+    \cfunction{int}{PL_free_hash_table}{hash_table_t table}
+Destroy the hash table.  First calls PL_clear_hash_table().
+
+    \cfunction{void*}{PL_lookup_hash_table}{hash_table_t table, void *key}
+Return the value matching \arg{key} or \const{NULL} if \arg{key} does not
+appear in the table.
+
+    \cfunction{void*}{PL_add_hash_table}{hash_table_t table,
+					 void *key, void *value, int flags}
+Add \arg{key}-\arg{value} to the table. The behaviour if \arg{key} is
+already in the table depends on \arg{flags}. If \const{0}, this function
+returns the existing value without updating the table. If
+\const{PL_HT_UPDATE} the old \arg{value} is \emph{replaced} and the
+function returns the old value. If \const{PL_HT_NEW}, a message and
+backtrace are printed and the function returns \arg{NULL} if \arg{key}
+is already in the table.
+
+    \cfunction{void*}{PL_del_hash_table}{hash_table_t table, void *key}
+Delete \arg{key} from the table, returning the old associated value or
+\const{NULL}
+
+    \cfunction{int}{PL_clear_hash_table}{hash_table_t table}
+Delete all key-value pairs from the table.  Call \arg{free_symbol} for
+each deleted pair.
+
+    \cfunction{hash_table_enum_t}{PL_new_hash_table_enum}{hash_table_t table}
+Return a table \jargon{enumerator} (cursor) that can be used to
+enumerate all key-value pairs using PL_advance_hash_table_enum(). The
+enumerator must be discarded using PL_free_hash_table_enum(). It is safe
+for another thread to add symbols while the table is being enumerated,
+but undefined whether or not these new symbols are visible. If another
+thread deletes a key that is not yet enumerated it will not be
+enumerated.
+
+    \cfunction{void}{PL_free_hash_table_enum}{hash_table_enum_t e}
+Discard an enumerator object created using PL_new_hash_table_enum().
+Failure to do so causes the table to use more and more memory on
+subsequent modifications.
+
+    \cfunction{int}{PL_advance_hash_table_enum}{hash_table_enum_t e,
+						void **key, void **value}
+Get the next key-value pair from a cursor.
+\end{description}
 
 \subsection{Debugging and profiling foreign code (valgrind)}
 \label{sec:foreign-debug-and-profile}

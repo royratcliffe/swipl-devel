@@ -68,7 +68,7 @@ extern "C" {
 /* PLVERSION_TAG: a string, normally "", but for example "rc1" */
 
 #ifndef PLVERSION
-#define PLVERSION 80132
+#define PLVERSION 80303
 #endif
 #ifndef PLVERSION_TAG
 #define PLVERSION_TAG ""
@@ -105,7 +105,7 @@ special declaration) or exported from the executable or DLL.
 Both using native Microsoft MSVC as well   as recent Cygwin (tested 1.1)
 compilers support __declspec(...) for exporting symbols.
 
-As SWI-Prolog.h can be included seperately or together with this file we
+As SWI-Prolog.h can be included separately or together with this file we
 duplicated this stuff.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -1228,6 +1228,35 @@ PL_EXPORT(const char*) PL_w32_running_under_wine(void);
 PL_EXPORT(PL_engine_t)	PL_create_engine(PL_thread_attr_t *attributes);
 PL_EXPORT(int)		PL_set_engine(PL_engine_t engine, PL_engine_t *old);
 PL_EXPORT(int)		PL_destroy_engine(PL_engine_t engine);
+
+
+		 /*******************************
+		 *	    HASH TABLES		*
+		 *******************************/
+
+#ifdef TABLE_H_INCLUDED
+typedef Table		hash_table_t;
+typedef TableEnum	hash_table_enum_t;
+#else
+typedef struct pl_hash_table	  *hash_table_t;
+typedef struct pl_hash_table_enum *hash_table_enum_t;
+#endif
+
+#define PL_HT_NEW	0x0001
+#define PL_HT_UPDATE	0x0002
+
+PL_EXPORT(hash_table_t)	PL_new_hash_table(int size,
+					  void (*free_symbol)(void *n, void *v));
+PL_EXPORT(int)		PL_free_hash_table(hash_table_t table);
+PL_EXPORT(void*)	PL_lookup_hash_table(hash_table_t table, void *key);
+PL_EXPORT(void*)	PL_add_hash_table(hash_table_t table,
+					  void *key, void *value, int flags);
+PL_EXPORT(void*)	PL_del_hash_table(hash_table_t table, void *key);
+PL_EXPORT(int)		PL_clear_hash_table(hash_table_t table);
+PL_EXPORT(hash_table_enum_t) PL_new_hash_table_enum(hash_table_t table);
+PL_EXPORT(void)		PL_free_hash_table_enum(hash_table_enum_t e);
+PL_EXPORT(int)		PL_advance_hash_table_enum(hash_table_enum_t e,
+						   void **key, void **value);
 
 
 		 /*******************************

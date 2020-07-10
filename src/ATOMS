@@ -90,6 +90,7 @@ A brace_term_position	"brace_term_position"
 A brace_terms		"brace_terms"
 A break			"break"
 A break_level		"break_level"
+A broadcast		"broadcast"
 A btree			"btree"
 A buffer		"buffer"
 A buffer_size		"buffer_size"
@@ -177,6 +178,7 @@ A cycles		"cycles"
 A cyclic_term		"cyclic_term"
 A dand			"$and"
 A date			"date"
+A db			"db"
 A db_reference		"db_reference"
 A dc_call_prolog	"$c_call_prolog"
 A dcall			"<meta-call>"
@@ -499,11 +501,13 @@ A mismatched_char	"mismatched_char"
 A mod			"mod"
 A mode			"mode"
 A modify		"modify"
+A modified		"modified"
 A module		"module"
 A module_class		"module_class"
 A module_property	"module_property"
 A module_transparent	"module_transparent"
 A modules		"modules"
+A monotonic		"monotonic"
 A msb			"msb"
 A multi			"multi"
 A multifile		"multifile"
@@ -540,6 +544,7 @@ A not_less_than_zero	"not_less_than_zero"
 A not_provable		"\\+"
 A not_strict_equal	"\\=="
 A not_unique		"not_unique"
+A notify		"notify"
 A number		"number"
 A number_of_clauses	"number_of_clauses"
 A number_of_rules	"number_of_rules"
@@ -557,6 +562,7 @@ A operator		"operator"
 A operator_priority	"operator_priority"
 A operator_specifier	"operator_specifier"
 A optimise		"optimise"
+A option		"option"
 A or			"or"
 A order			"order"
 A output		"output"
@@ -679,6 +685,7 @@ A ret			"ret"
 A retract		"retract"
 A retractall		"retractall"
 A retry			"retry"
+A retry_every		"retry_every"
 A round			"round"
 A rshift		">>"
 A running		"running"
@@ -801,6 +808,8 @@ A thread_property	"thread_property"
 A threads		"threads"
 A threads_created	"threads_created"
 A threads_peak		"threads_peak"
+A thread_update_options	"thread_update_options"
+A thread_wait_options	"thread_wait_options"
 A trienode		"trienode"
 A tripwire		"tripwire"
 A throw			"throw"
@@ -810,6 +819,7 @@ A time_limit_exceeded	"time_limit_exceeded"
 A time_stamp		"time_stamp"
 A timeout		"timeout"
 A timeout_error		"timeout_error"
+A timeout_option	"timeout_option"
 A timezone		"timezone"
 A tmp_dir		"tmp_dir"
 A tnot			"tnot"
@@ -882,11 +892,14 @@ A very_deep		"very_deep"
 A vmi			"vmi"
 A volatile		"volatile"
 A wait			"wait"
+A wait_preds		"wait_preds"
+A waiting		"waiting"
 A wakeup		"wakeup"
 A walltime		"walltime"
 A warning		"warning"
 A wchar_t		"wchar_t"
 A weak			"weak"
+A wildcard_option	"wildcard_option"
 A win_file_access_check "win_file_access_check"
 A when_condition	"when_condition"
 A white			"white"
@@ -906,6 +919,7 @@ A yfx			"yfx"
 A zero			"zero"
 A zero_divisor		"zero_divisor"
 A zip_options		"zip_options"
+A zip64			"zip64"
 
 F abs			1
 F access		1
@@ -920,6 +934,7 @@ F asin			1
 F asinh			1
 F assert		1
 F asserta		1
+F assertz		1
 F atan			1
 F atan			2
 F atanh			1
@@ -1084,6 +1099,7 @@ F minus			1
 F minus			2
 F mod			2
 F mode			1
+F module		1
 F msb			1
 F multi			1
 F nan			0
@@ -1195,6 +1211,7 @@ F undefinterc		4
 F unify_determined	2
 F uninstantiation_error	1
 F var			1
+F waiting		1
 F wakeup		3
 F warning		3
 F write_errors		1

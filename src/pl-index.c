@@ -337,10 +337,8 @@ nextClauseFromBucket(ClauseIndex ci, Word argv, IndexContext ctx ARG_LD)
 
 static void
 setClauseChoice(ClauseChoice chp, ClauseRef cref, gen_t generation ARG_LD)
-{ while ( cref && !GLOBALLY_VISIBLE_CLAUSE(cref->value.clause, generation) )
-  { cref = cref->next;
-    LD->clauses.erased_skipped++;
-  }
+{ while ( cref && !visibleClauseCNT(cref->value.clause, generation) )
+    cref = cref->next;
 
   chp->cref = cref;
 }
@@ -536,6 +534,7 @@ simple:
   return cref;
 }
 
+int acquired = 0;
 
 ClauseRef
 firstClause(Word argv, LocalFrame fr, Definition def, ClauseChoice chp ARG_LD)
@@ -554,9 +553,11 @@ firstClause(Word argv, LocalFrame fr, Definition def, ClauseChoice chp ARG_LD)
 			      &def->impl.clauses,
 			      &ctx
 			      PASS_LD);
+#define CHK_STATIC_RELOADING() (LD->gen_reload && false(def, P_DYNAMIC))
   DEBUG(CHK_SECURE, assert(!cref || !chp->cref ||
 			   visibleClause(chp->cref->value.clause,
-					 generationFrame(fr))));
+					 generationFrame(fr)) ||
+			   CHK_STATIC_RELOADING()));
   release_def(def);
 
   return cref;
@@ -1030,13 +1031,13 @@ the list.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static void
-gcClauseList(ClauseList clist, DirtyDefInfo ddi, gen_t start)
+gcClauseList(ClauseList clist, DirtyDefInfo ddi, gen_t start, Buffer tr_starts)
 { ClauseRef cref=clist->first_clause, prev = NULL;
 
   while(cref && clist->erased_clauses)
   { Clause cl = cref->value.clause;
 
-    if ( true(cl, CL_ERASED) && ddi_is_garbage(ddi, start, cl) )
+    if ( true(cl, CL_ERASED) && ddi_is_garbage(ddi, start, tr_starts, cl) )
     { ClauseRef c = cref;
 
       clist->erased_clauses--;
@@ -1070,7 +1071,8 @@ the number of indexable entries that have been removed from the bucket.
 
 static int
 gcClauseBucket(Definition def, ClauseBucket ch,
-	       unsigned int dirty, int is_list, DirtyDefInfo ddi, gen_t start)
+	       unsigned int dirty, int is_list, DirtyDefInfo ddi,
+	       gen_t start, Buffer tr_starts)
 { ClauseRef cref = ch->head, prev = NULL;
   int deleted = 0;
 
@@ -1079,7 +1081,7 @@ gcClauseBucket(Definition def, ClauseBucket ch,
     { ClauseList cl = &cref->value.clauses;
 
       if ( cl->erased_clauses )
-      { gcClauseList(cl, ddi, start);
+      { gcClauseList(cl, ddi, start, tr_starts);
 	dirty--;
 
 	if ( cl->first_clause == NULL )
@@ -1088,7 +1090,7 @@ gcClauseBucket(Definition def, ClauseBucket ch,
     } else
     { Clause cl = cref->value.clause;
 
-      if ( true(cl, CL_ERASED) && ddi_is_garbage(ddi, start, cl) )
+      if ( true(cl, CL_ERASED) && ddi_is_garbage(ddi, start, tr_starts, cl) )
       { ClauseRef c;
 
 	dirty--;
@@ -1127,7 +1129,7 @@ gcClauseBucket(Definition def, ClauseBucket ch,
 	  { for(cref=ch->head; cref; cref=cref->next)
 	    { Clause cl = cref->value.clause;
 	      assert( false(cl, CL_ERASED) ||
-		      !ddi_is_garbage(ddi, start, cl)
+		      !ddi_is_garbage(ddi, start, tr_starts, cl)
 		    );
 	    }
 	  }
@@ -1145,7 +1147,7 @@ See also deleteActiveClauseFromIndexes() comment
 
 static void
 cleanClauseIndex(Definition def, ClauseList cl, ClauseIndex ci,
-		 DirtyDefInfo ddi, gen_t start)
+		 DirtyDefInfo ddi, gen_t start, Buffer tr_starts)
 { if ( cl->number_of_clauses < ci->resize_below )
   { deleteIndex(def, cl, ci);
   } else
@@ -1155,7 +1157,8 @@ cleanClauseIndex(Definition def, ClauseList cl, ClauseIndex ci,
 
       for(; n; n--, ch++)
       { if ( ch->dirty )
-	{ ci->size -= gcClauseBucket(def, ch, ch->dirty, ci->is_list, ddi, start);
+	{ ci->size -= gcClauseBucket(def, ch, ch->dirty, ci->is_list,
+				     ddi, start, tr_starts);
 	  if ( !ch->dirty && --ci->dirty == 0 )
 	    break;
 	}
@@ -1173,7 +1176,8 @@ references erased before generation `active` from the indexes.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
-cleanClauseIndexes(Definition def, ClauseList cl, DirtyDefInfo ddi, gen_t start)
+cleanClauseIndexes(Definition def, ClauseList cl, DirtyDefInfo ddi,
+		   gen_t start, Buffer tr_starts)
 { ClauseIndex *cip;
 
   if ( (cip=cl->clause_indexes) )
@@ -1182,7 +1186,7 @@ cleanClauseIndexes(Definition def, ClauseList cl, DirtyDefInfo ddi, gen_t start)
 
       if ( ISDEADCI(ci) )
 	continue;
-      cleanClauseIndex(def, cl, ci, ddi, start);
+      cleanClauseIndex(def, cl, ci, ddi, start, tr_starts);
     }
   }
 }
@@ -2164,7 +2168,7 @@ compar_keys(const void *p1, const void *p2)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Only the final call gets a clause_count > 0. Here we do the remainder of
-the assessment. We could consider  for   a  seperate  function to merely
+the assessment. We could consider  for   a  separate  function to merely
 reduce the set.
 
 (*) Currently we cannot  combine  variables   with  functor  indexes  as
@@ -2692,15 +2696,16 @@ sizeofClauseIndexes(Definition def)
   ClauseIndex *cip;
   size_t size = 0;
 
-  acquire_def(def);
   if ( (cip=def->impl.clauses.clause_indexes) )
-  { for(; *cip; cip++)
+  { acquire_def(def);
+    for(; *cip; cip++)
     { ClauseIndex ci = *cip;
 
       if ( ISDEADCI(ci) )
 	continue;
       size += sizeofClauseIndex(ci);
     }
+    release_def(def);
   }
 
   return size;

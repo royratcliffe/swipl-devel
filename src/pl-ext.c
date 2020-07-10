@@ -121,7 +121,6 @@ static const PL_extension foreigns[] = {
 #endif
 
   FRG("$c_current_predicate",	2, pl_current_predicate,  NDET|META),
-  FRG("current_predicate",	1, pl_current_predicate1, NDET|META|ISO),
   FRG("$require",		1, pl_require,		     META),
 
   FRG("repeat",			0, pl_repeat,		 NDET|ISO),
@@ -406,6 +405,7 @@ DECL_PLIST(zip);
 DECL_PLIST(cbtrace);
 DECL_PLIST(wrap);
 DECL_PLIST(event);
+DECL_PLIST(transaction);
 
 void
 initBuildIns(void)
@@ -476,6 +476,7 @@ initBuildIns(void)
   REG_PLIST(cbtrace);
   REG_PLIST(wrap);
   REG_PLIST(event);
+  REG_PLIST(transaction);
 
 #define LOOKUPPROC(name) \
 	{ GD->procedures.name = lookupProcedure(FUNCTOR_ ## name, m); \
@@ -529,6 +530,8 @@ initBuildIns(void)
 #ifdef O_PLMT
   PL_meta_predicate(PL_predicate("thread_create",    3, "system"), "0?+");
   PL_meta_predicate(PL_predicate("thread_signal",    2, "system"), "+0");
+  PL_meta_predicate(PL_predicate("thread_wait",	     2, "system"), "0:");
+  PL_meta_predicate(PL_predicate("thread_update",    2, "system"), "0:");
 #endif
   PL_meta_predicate(PL_predicate("thread_idle",      2, "system"), "0+");
   PL_meta_predicate(PL_predicate("prolog_frame_attribute", 3, "system"), "++:");

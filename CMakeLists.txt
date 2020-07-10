@@ -45,11 +45,17 @@ option(BUILD_MACOS_BUNDLE
 option(BUILD_TESTING
        "Build test files and setup for ctest"
        ON)
+option(SKIP_SSL_TESTS
+       "Skip the SSL tests"
+       OFF)
 option(BUILD_SWIPL_LD
        "Create the swipl-ld utility"
        ON)
 option(INSTALL_TESTS
        "Install script and files needed to run tests of the final installation"
+       OFF)
+option(GCOV
+       "Compile for coverage analysis using gcov (gcc)"
        OFF)
 
 set(JNIDIR ""

@@ -3,7 +3,7 @@
     Author:        Keri Harris
     E-mail:        keri.harris@securitease.com
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2018, University of Amsterdam
+    Copyright (c)  2011-2020, University of Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
 
@@ -93,17 +93,18 @@
 #define MSG_INFERENCE_LIMIT	 48
 #define MSG_NSOLS		 40
 #define MSG_SRCFILE		 50
-#define MSG_DESTROY_MODULE	 51
-#define MSG_CREATE_MODULE	 52
-#define MSG_QUEUE_GC		 53
-#define MSG_ACYCLIC		 54
-#define MSG_OPERATOR		 55
-#define MSG_MUTEX_GC		 56
-#define MSG_REC_ATTVAR		 57
-#define MSG_TTY			 58
-#define MSG_OS_DIR		 59
+#define MSG_SRCFILE_REF		 51
+#define MSG_DESTROY_MODULE	 52
+#define MSG_CREATE_MODULE	 53
+#define MSG_QUEUE_GC		 54
+#define MSG_ACYCLIC		 55
+#define MSG_OPERATOR		 56
+#define MSG_MUTEX_GC		 57
+#define MSG_REC_ATTVAR		 58
+#define MSG_TTY			 59
+#define MSG_OS_DIR		 60
 
-#define MSG_READ_TOKEN		 60
+#define MSG_READ_TOKEN		 65
 
 #define MSG_CONTINUE		 70
 
@@ -209,6 +210,11 @@
 #define TABLING_NO_EARLY_COMPLETION 320
 #define TABLING_NO_SIMPLIFY	 321		/* these affect behaviour */
 #define TABLING_NO_AC		 322
+
+#define MSG_THREAD_WAIT		 350
+
+#define MSG_TRANSACTION		 360
+#define MSG_COMMIT		 361
 
 #define CHK_SECURE              1000
 #define CHK_HIGH_ARITY          1001

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1999-2019, University of Amsterdam
+    Copyright (c)  1999-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -36,6 +36,7 @@
 
 #ifndef PL_THREAD_H_DEFINED
 #define PL_THREAD_H_DEFINED
+#include "os/pl-buffer.h"
 
 #ifdef O_PLMT
 #include <pthread.h>
@@ -179,6 +180,16 @@ typedef struct pl_mutex
   unsigned auto_destroy	: 1;		/* asked to destroy */
 } pl_mutex;
 
+#define ALERT_QUEUE_RD	1
+#define ALERT_QUEUE_WR	2
+
+typedef struct alert_channel
+{ int	type;				/* Type of channel */
+  union
+  { message_queue *queue;
+  } obj;
+} alert_channel;
+
 #define PL_THREAD_MAGIC 0x2737234f
 
 extern counting_mutex _PL_mutexes[];	/* Prolog mutexes */
@@ -211,9 +222,11 @@ extern counting_mutex _PL_mutexes[];	/* Prolog mutexes */
 #define L_CGCGEN       25
 #define L_EVHOOK       26
 #define L_OSDIR	       27
+#define L_ALERT	       28
+#define L_GENERATION   29
 #ifdef __WINDOWS__
-#define L_DDE	       28
-#define L_CSTACK       29
+#define L_DDE	       30
+#define L_CSTACK       31
 #endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -273,9 +286,6 @@ countingMutexUnlock(counting_mutex *cm)
 
 #define LOCKMODULE(module)	countingMutexLock((module)->mutex)
 #define UNLOCKMODULE(module)	countingMutexUnlock((module)->mutex)
-
-#define LOCKSRCFILE(sf)		countingMutexLock((sf)->mutex)
-#define UNLOCKSRCFILE(sf)	countingMutexUnlock((sf)->mutex)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 				Thread-local data
@@ -337,6 +347,66 @@ extern TLD_KEY PL_ldata;		/* key to local data */
 
 
 		 /*******************************
+		 *	    WAIT SUPPORT	*
+		 *******************************/
+
+typedef struct thread_dcell
+{ PL_local_data_t     *ld;		/* The thread */
+  struct thread_dcell *next;		/* next in chain */
+  struct thread_dcell *prev;		/* previous in chain */
+} thread_dcell;
+
+typedef enum twf_type
+{ TWF_DB,
+  TWF_MODULE,
+  TWF_PREDICATE
+} twf_type;
+
+typedef struct thread_wait_channel
+{ twf_type	type;			/* TWF_* */
+  int		signalled;		/* Is signalled */
+  int		flags;			/* TWF_ASSERT/RETRACT */
+  gen_t		generation;		/* Overall generation */
+  union
+  { void       *any;
+    Module      module;			/* Module */
+    Definition  predicate;		/* Predicate */
+  } obj;
+} thread_wait_channel;
+
+typedef struct thread_wait_for		/* thread data for wait/update */
+{ buffer	channels;		/* channels we listen on */
+  int		signalled;		/* are we signalled? */
+  thread_dcell *registered;		/* cell in thread_wait_area */
+  struct module_cell *updating;		/* thread_update/2 modules */
+} thread_wait_for;
+
+typedef struct thread_wait_area		/* module data for wait/update */
+{ simpleMutex	mutex;
+#ifdef __WINDOWS__
+  CONDITION_VARIABLE cond;
+#else
+  pthread_cond_t     cond;
+#endif
+  thread_dcell *w_head;			/* waiting thread head */
+  thread_dcell *w_tail;			/* waiting thread tail */
+} thread_wait_area;
+
+
+
+#define wakeupThreads(def, flags) \
+	do \
+	{ if ( def->module->wait && def->module->wait->w_head ) \
+	  { thread_wait_channel wch = { .type = TWF_PREDICATE, \
+				        .obj.any = def, \
+					.flags = flags \
+				      }; \
+	    signal_waiting_threads(def->module, &wch); \
+	  } \
+	} while(0)
+
+
+		 /*******************************
 		 *	       WINDOWS		*
 		 *******************************/
 
@@ -374,14 +444,17 @@ COMMON(intptr_t)	system_thread_id(PL_thread_info_t *info);
 COMMON(double)	        ThreadCPUTime(PL_local_data_t *ld, int which);
 COMMON(void)		get_current_timespec(struct timespec *time);
 COMMON(void)	        carry_timespec_nanos(struct timespec *time);
+COMMON(int)		signal_waiting_threads(Module m, thread_wait_channel *wch);
+COMMON(void)		free_wait_area(thread_wait_area *wa);
+
 
 		 /*******************************
 		 *	 GLOBAL GC SUPPORT	*
 		 *******************************/
 
 COMMON(void)	forThreadLocalDataUnsuspended(
-		    void (*func)(struct PL_local_data *),
-		    unsigned flags);
+		    void (*func)(struct PL_local_data *, void *ctx),
+		    void *ctx);
 COMMON(void)	resumeThreads(void);
 COMMON(void)	markAtomsMessageQueues(void);
 COMMON(void)	markAtomsThreadMessageQueue(PL_local_data_t *ld);
@@ -393,11 +466,18 @@ COMMON(void)	markAtomsThreadMessageQueue(PL_local_data_t *ld);
 		 *     CONDITION VARIABLES	*
 		 *******************************/
 
+#define CV_READY	0		/* was signalled */
+#define CV_MAYBE	1		/* might be signalled */
+#define CV_TIMEDOUT	2		/* timed out */
+#define CV_INTR		3		/* interrupted */
+
 #ifdef __WINDOWS__
 
-COMMON(int)	cv_timedwait(CONDITION_VARIABLE *cv,
+COMMON(int)	cv_timedwait(message_queue *queue,
+			     CONDITION_VARIABLE *cv,
 			     CRITICAL_SECTION *external_mutex,
-			     struct timespec *deadline);
+			     struct timespec *deadline,
+			     const struct timespec *retry_every);
 
 #define cv_broadcast(cv)	WakeAllConditionVariable(cv)
 #define cv_signal(cv)		WakeConditionVariable(cv)
@@ -406,9 +486,11 @@ COMMON(int)	cv_timedwait(CONDITION_VARIABLE *cv,
 
 #else
 
-COMMON(int)	cv_timedwait(pthread_cond_t *cv,
+COMMON(int)	cv_timedwait(message_queue *queue,
+			     pthread_cond_t *cv,
 			     pthread_mutex_t *external_mutex,
-			     struct timespec *deadline);
+			     struct timespec *deadline,
+			     const struct timespec *retry_every);
 
 #define cv_broadcast(cv)	pthread_cond_broadcast(cv)
 #define cv_signal(cv)		pthread_cond_signal(cv)
@@ -417,7 +499,7 @@ COMMON(int)	cv_timedwait(pthread_cond_t *cv,
 
 #endif /* __WINDOWS__ */
 
-#define cv_wait(cv, m)		cv_timedwait(cv, m, NULL)
+#define cv_wait(cv, m)		cv_timedwait(NULL, cv, m, NULL, NULL)
 
 
 #else /*O_PLMT, end of threading-stuff */
@@ -444,8 +526,6 @@ COMMON(int)	cv_timedwait(pthread_cond_t *cv,
 #define UNLOCKDYNDEF(def)
 #define LOCKMODULE(module)
 #define UNLOCKMODULE(module)
-#define LOCKSRCFILE(sf)
-#define UNLOCKSRCFILE(sf)
 
 #define acquire_ldata(ld)	(ld)
 #define release_ldata(ld)	(void)0
@@ -457,6 +537,9 @@ COMMON(double)	        ThreadCPUTime(PL_local_data_t *ld, int which);
 		 /*******************************
 		 *	       COMMON		*
 		 *******************************/
+
+#define TWF_ASSERT	0x0001		/* Predicate actions */
+#define TWF_RETRACT	0x0002
 
 typedef struct
 { functor_t functor;			/* functor of property */

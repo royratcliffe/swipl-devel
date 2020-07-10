@@ -71,7 +71,7 @@ set(SRC_CORE pl-atom.c pl-wam.c pl-arith.c pl-bag.c pl-error.c
     pl-dbref.c pl-termhash.c pl-variant.c pl-assert.c
     pl-copyterm.c pl-debug.c pl-cont.c pl-ressymbol.c pl-dict.c
     pl-trie.c pl-indirect.c pl-tabling.c pl-rsort.c pl-mutex.c
-    pl-allocpool.c pl-wrap.c pl-event.c)
+    pl-allocpool.c pl-wrap.c pl-event.c pl-transaction.c)
 
 set(LIBSWIPL_SRC
     ${SRC_CORE}
@@ -428,6 +428,17 @@ if(PROFILE_GUIDED_OPTIMIZATION)
   endif()
 endif()
 
+if(GCOV)
+  set(GCOV_FLAGS --coverage -fkeep-inline-functions -fkeep-static-functions)
+
+  message("-- GCOV: setup for data collection")
+  foreach(t ${PGO_TARGETS})
+    target_compile_options(${t} PRIVATE ${GCOV_FLAGS})
+    string(REPLACE ";" " " gen_flags "${GCOV_FLAGS}")
+    set_target_properties(${t} PROPERTIES LINK_FLAGS "${gen_flags}")
+  endforeach()
+endif()
+
 if(0)
 # Does not work.  Please use scripts/pgo-compile.sh
 add_custom_target(
@@ -458,12 +469,12 @@ add_custom_target(check
     COMMAND ${PROG_SWIPL} -f none --no-packs -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl)
 
 set(SWIPL_TEST_DIRS unprotected core attvar debug tabling library
-    charset eclipse clp GC save
+    charset eclipse clp GC save files transaction
     xsb/basic_tests xsb/ai_tests xsb/ptq xsb/neg_tests xsb/delay_tests
     xsb/wfs_tests xsb/table_tests xsb/incremental_tests xsb/nonmt_tests
     xsb/sub_tests)
 if(MULTI_THREADED)
-  set(SWIPL_TEST_DIRS ${SWIPL_TEST_DIRS} thread)
+  set(SWIPL_TEST_DIRS ${SWIPL_TEST_DIRS} thread thread_wait)
 endif()
 
 add_test(NAME swipl:basic

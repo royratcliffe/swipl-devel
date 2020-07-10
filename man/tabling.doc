@@ -63,7 +63,7 @@ and thus becomes prohibitively slow rather quickly, e.g., the execution
 time for $N=30$ is already 0.4 seconds. Using tabling, \term{fib}{N,F}
 for each value of $N$ is computed only once and the algorithm becomes
 linear. Tabling effectively inverts the execution order for this case:
-it suspends the final addition (F is F1+F2) until the two preceeding
+it suspends the final addition (F is F1+F2) until the two preceding
 Fibonacci numbers have been added to the answer tables. Thus, we can
 reduce the complexity from the show-stopping $2^N$ to linear by adding a
 tabling directive and otherwise not changing the algorithm. The code
@@ -233,7 +233,7 @@ connection(X, Y, P) :-
     append(P0, [Y], P).
 \end{code}
 
-The mode declation scheme is equivalent to XSB with partial
+The mode declaration scheme is equivalent to XSB with partial
 compatibility support for YAP and B-Prolog. The \term{lattice}{PI} mode
 is the most general mode.  The YAP \const{all} (B-Prolog \const{@}) mode
 is not yet supported. The list below describes the supported modes and
@@ -257,7 +257,7 @@ are inputs. The last argument must be unified with a term that
 represents the new aggregated answer.
 
     \termitem{po}{PI}
-\jargon{Partial Ordening}. The new answer is added iff
+\jargon{Partial Ordering}. The new answer is added iff
 \term{call}{PI, +Old, +Answer} succeeds. For example, \verb$po('<'/2)$
 accumulates the largest result. In SWI-Prolog the arity (2) may be
 omitted, resulting in \verb$po(<)$.
@@ -453,7 +453,7 @@ answer for some tabled predicate, record this answer as a
     \item
 If a conditional answer is added to a table, it is propagated to its
 \jargon{followers}, say $f$, adding the pair \{$f$,answer\} to the
-delay list. If this leads to an answer, the answer is conditonal
+delay list. If this leads to an answer, the answer is conditional
 on this pair.
     \item
 After the continuations of all unresolved tnot/1 calls have
@@ -505,9 +505,9 @@ disjunction of conjunctions where each literal is either a tabled
 goal or tnot/1 of a tabled goal.   The remaining model has at least a
 cycle through a negative literal (tnot/1) and has no single
 solution in the \jargon{stable model semantics}, i.e., it either
-expresses a contradition (as undefined/0, i.e., there is no stable model)
-or a multiple stable models as in the program below, where both \{p\}
-and \{q\} are stable models.
+expresses a contradiction (as undefined/0, i.e., there is no stable
+model) or a multiple stable models as in the program below, where both
+\{p\} and \{q\} are stable models.
 
 \begin{code}
 :- table p/0, q/0.
@@ -645,11 +645,80 @@ Note that invalidating and re-evaluation is done at the level of tables.
 Notably asserting a clause invalidates all affected tables and may lead
 to re-evaluating of all these tables. Incremental tabling automates
 manual abolishing of invalid tables in a changing world and avoids
-unnecesary re-evaluation if indirectly affected tables prove unaffected
+unnecessary re-evaluation if indirectly affected tables prove unaffected
 because the answer set of dependent tables is unaffected by the change.
 This is the same policy as implemented in XSB
 \cite{DBLP:journals/tplp/Swift14}. Future versions may implement a more
 fine grained approach.
+
+
+\section{Monotonic tabling}
+\label{sec:tabling-monotonic}
+
+\jargon{Incremental tabling} (\secref{tabling-incremental}) maintains
+the consistency of tables that depend directly or indirectly on
+(incremental) dynamic predicates. This is done by \jargon{invalidating}
+dependent tables on an assert or retract and lazily \jargon{re-evaluate}
+invalid tables when their content is needed. Incremental tabling
+preserves all normal tabling properties, including well founded
+semantics. The downside is that re-evaluation recomputes the table from
+scratch. This section deals with \jargon{monotonic tabling}, a mechanism
+that propagates the consequences of assert/1 and friends without
+recomputing the dependent tables from scratch. Unlike incremental
+tabling though, monotonic tabling can only deal with monotonic programs,
+in particular it does \emph{not} deal with negation.
+
+The example below defines the transitive closure of a bi-directional
+graph using monotonic tabling. This program builds tables for the
+\nopredref{connected}{2} and maintains these tables when new facts are
+added for \nopredref{link}{2}.
+
+\begin{code}
+:- table connected/2 as monotonic.
+:- dynamic link/2 as monotonic.
+
+connected(X, Y) :-
+    connected(Y, X).
+connected(X, Z) :-
+    connected(X, Y),
+    connected(Y, Z).
+connected(X, Y) :-
+    link(X, Y).
+\end{code}
+
+\begin{description}
+    \predicate{abolish_monotonic_tables}{0}{}
+Abolish all monotonic tables and their dependencies.
+\end{description}
+
+The list below describes properties of monotonic tabling and relation to
+other tabling primitives:
+
+\begin{itemize}
+   \item When using retract/1 on a dynamic monotonic predicate, all
+dependent tables and dependency links are destroyed.  Subsequent calling
+of one of the dependent goals rebuilds the tables and dependencies from
+scratch.
+
+   \item abolish_all_tables/0 destroys all monotonic dependency relations.
+
+   \item Dynamic predicates can be declared as both \const{monotonic} and
+\const{incremental} and it allowed to have both incremental and monotonic
+tabled predicates that depend on such dynamic predicates.
+
+   \item A tabled predicate that depends on a monotonic tabled predicate
+must be tabled monotonic or incremental. If the dependent predicate is
+incremental a new answer invalidates the incremental table.
+\end{itemize}
+
+\paragraph{Status}
+
+Monotonic tabling is experimental and incomplete. Notably support for
+\jargon{answer subsumption} and \jargon{call subsumption} is probably
+possible and may greatly improve the application domain and resource
+usage. Monotonic tabling should work with both shared and private
+tables.  Concurrency issues have not yet been tested though.
+
 
 \section{Shared tabling}
 \label{sec:tabling-shared}
@@ -664,7 +733,7 @@ shared using, e.g.,
 :- table (p/1, q/2) as shared.
 \end{code}
 
-A thread may find a a table for a particular variant of a shared tabled
+A thread may find a table for a particular variant of a shared tabled
 predicate in any of the following states:
 
 \begin{description}
@@ -679,9 +748,9 @@ continue. If it is owned by another thread we \emph{wait} for the table
 \emph{unless there is a cycle of threads waiting for each others table}.
 The latter situation would cause a deadlock and therefore we raise a
 \const{deadlock} exception. This exception causes the current SCC to be
-abandonned and gives other threads the opportunity to claim ownership of
+abandoned and gives other threads the opportunity to claim ownership of
 the tables that were owned by this thread. The thread that raised the
-exception and abandonned the SCC simply restarts the leader goal of the
+exception and abandoned the SCC simply restarts the leader goal of the
 SCC. As other threads now have claimed more variants of the SCC it will,
 in most cases, wait for these threads instead of creating a new
 deadlock.
@@ -704,7 +773,7 @@ shared table has no effect on the semantics of the tabled predicates.}
 An attempt to abolish an incomplete table results in the table to be
 marked for destruction on completion. The thread that is completing the
 table continues to do so and continues execution with the computed table
-answers. Any other thread blocks, waiting for the the table to complete.
+answers. Any other thread blocks, waiting for the table to complete.
 Once completed, the table is destroyed and the waiting threads see a
 \jargon{fresh} table\footnote{Future versions may avoid waiting by
 converting the abolished shared table to a private table.}.
@@ -712,7 +781,7 @@ converting the abolished shared table to a private table.}.
 The current implementation never reclaims shared tables.  Instead, they
 remain part of the global variant table and only the answers of the
 shared table are reclaimed. Future versions may garbage collect such
-tables.  See also abolish_shared_tables/0
+tables.  See also abolish_shared_tables/0.
 
 
 \subsection{Status and future of shared tabling}
@@ -731,9 +800,6 @@ resolve these issues.
     the table.
     \item Only the answers of shared tables can be reclaimed, not the
     answer table itself.
-    \item There is no separete size limit for the shared tables.  The
-    limit is the same as for a single thread (see
-    \prologflag{table_space}).
 \end{itemize}
 
 SWI-Prolog's \jargon{continuation based} tabling offers the opportunity
@@ -762,7 +828,7 @@ be notified of suspicious events (debugging) or dynamically adjust the
 (tabling) strategy of the program. Second, they may continue the
 computation that results in a partial answer (\jargon{bounded
 rationality}). Unlike just not exploring part of the space though, we
-use the third thruth value of well founded semantics to keep track of
+use the third truth value of well founded semantics to keep track of
 answers that have not been affected by the restraints and those that
 have been affected.
 
@@ -813,11 +879,11 @@ size_abstract_term/3.
 The size of a term is defined as the number of compound subterms
 (\jargon{function symbols}) that appear in term. \arg{Abstract} is an
 abstract copy of \arg{Term} where each argument is abstracted by
-copying only the first \arg{Size} function sumbols and constants.
+copying only the first \arg{Size} function symbols and constants.
 Excess function symbols are replaced by fresh variables.
 
 This predicate is a helper for tabling where \arg{Term} is the
-\functor{ret}{N} \jargon{answer skeleton} that is added to the an
+\functor{ret}{N} \jargon{answer skeleton} that is added to the
 \jargon{answer table}.  Examples:
 
 \begin{center}\begin{tabular}{cll}
@@ -886,7 +952,7 @@ Ignore the too large answer.  Note that this is semantically incorrect.
     \termitem{bounded_rationality}{}
 In this mode, the large answer is \jargon{abstracted} in the same way as
 subgoals are abstracted (see \secref{tabling-restraint-subgoal}). This
-is semantically incorrect, but our third thruth value \jargon{undefined}
+is semantically incorrect, but our third truth value \jargon{undefined}
 is used to remedy this problem. In other words, the abstracted value is
 added to the table as \jargon{undefined} and all conclusions that depend
 on usage of this abstracted value are thus undefined unless they can
@@ -952,7 +1018,7 @@ Prepare the predicates specified by \arg{Specification} for tabled
 execution.  \arg{Specification} is a \jargon{comma-list}, each member
 specifying tabled execution for a specific predicate.  The individual
 specification is either a \jargon{predicate indicator} (name/arity or
-name//arity) or head specifing tabling with \jargon{answer subsumption}.
+name//arity) or head specifying tabling with \jargon{answer subsumption}.
 
 Although table/1 is normally used as a directive, SWI-Prolog allows
 calling it as a runtime predicate to prepare an existing predicate for
@@ -1018,7 +1084,7 @@ The tnot/1 predicate implements \jargon{tabled negation}. This predicate
 realises \jargon{Well Founded Semantics}. See \secref{WFS} for details.
 
     \predicate{not_exists}{1}{:Goal}
-Handles tabled negation for non-ground (\jargon{floundaring}) \arg{Goal}
+Handles tabled negation for non-ground (\jargon{floundering}) \arg{Goal}
 as well as non tabled goals. If \arg{Goal} is ground and tabled
 not_exists/1 calls tnot/1. Otherwise it used \term{tabled_call}{Goal} to
 create a table and subsequently uses tnot/1 on the created table.
@@ -1042,7 +1108,7 @@ tabled_call(Goal) :- call(Goal).
     \predicate{current_table}{2}{:Variant, -Trie}
 True when \arg{Trie} is the answer table for \arg{Variant}.
 
-    \predicate{untable}{:Specification}
+    \predicate{untable}{1}{:Specification}
 Remove the tabling instrumentation for the specified predicates.
 \arg{Specification} is compatible with table/1, although tabling with
 \jargon{answer subsumption} may be removed using a name/arity
@@ -1050,7 +1116,7 @@ specification.
 
     \predicate{abolish_all_tables}{0}{}
 Remove all tables, both \jargon{private} and \jargon{shared} (see
-\secref{tabling-shared}. Since the introduction of \jargon{incremental
+\secref{tabling-shared}). Since the introduction of \jargon{incremental
 tabling} (see \secref{tabling-incremental}) abolishing tables is rarely
 required to maintain consistency of the tables with a changed
 environment. Tables may be abolished regardless of the current state of
@@ -1158,7 +1224,7 @@ particular,
     \item Tables must be shared between threads, both to
           reduce space and avoid recomputation.
     \item Tables must be invalidated and reclaimed automatically.
-    \item Notably XSB supports incremental tabeling and well-founded
+    \item Notably XSB supports incremental tabling and well-founded
           semantics under negation.
 \end{shortlist}
 

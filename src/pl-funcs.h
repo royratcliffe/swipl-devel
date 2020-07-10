@@ -124,7 +124,8 @@ COMMON(int)		addClauseToIndexes(Definition def, Clause cl,
 					   ClauseRef where);
 COMMON(void)		delClauseFromIndex(Definition def, Clause cl);
 COMMON(void)		cleanClauseIndexes(Definition def, ClauseList cl,
-					   DirtyDefInfo ddi, gen_t start);
+					   DirtyDefInfo ddi,
+					   gen_t start, Buffer tr_starts);
 COMMON(void)		clearTriedIndexes(Definition def);
 COMMON(void)		unallocClauseIndexTable(ClauseIndex ci);
 COMMON(void)		deleteActiveClauseFromIndexes(Definition def, Clause cl);
@@ -266,8 +267,9 @@ COMMON(void)		clearUninitialisedVarsFrame(LocalFrame, Code);
 COMMON(void)		clearLocalVariablesFrame(LocalFrame fr);
 COMMON(void)		setLTopInBody(void);
 COMMON(word)		check_foreign(void);	/* DEBUG(CHK_SECURE...) stuff */
-COMMON(void)		markAtomsOnStacks(PL_local_data_t *ld);
-COMMON(void)		markPredicatesInEnvironments(PL_local_data_t *ld);
+COMMON(void)		markAtomsOnStacks(PL_local_data_t *ld, void *ctx);
+COMMON(void)		markPredicatesInEnvironments(PL_local_data_t *ld,
+						     void *ctx);
 COMMON(QueryFrame)	queryOfFrame(LocalFrame fr);
 COMMON(void)		mark_active_environment(struct bit_vector *active,
 						LocalFrame fr, Code PC);
@@ -313,7 +315,9 @@ COMMON(word)		pl_import(term_t pred);
 #ifdef O_PROLOG_HOOK
 COMMON(word)		pl_set_prolog_hook(term_t module, term_t old, term_t new);
 #endif
-
+COMMON(ModuleEnum)	newModuleEnum(int flags);
+COMMON(Module)		advanceModuleEnum(ModuleEnum en);
+COMMON(void)		freeModuleEnum(ModuleEnum en);
 
 /* pl-op.c */
 COMMON(int)		currentOperator(Module m, atom_t name, int kind,
@@ -436,7 +440,6 @@ COMMON(int)		get_procedure(term_t descr, Procedure *proc,
 COMMON(int)		checkModifySystemProc(functor_t f);
 COMMON(int)		overruleImportedProcedure(Procedure proc, Module target);
 COMMON(word)		pl_current_predicate(term_t name, term_t functor, control_t h);
-COMMON(foreign_t)	pl_current_predicate1(term_t spec, control_t ctx);
 COMMON(void)		clear_meta_declaration(Definition def);
 COMMON(void)		setMetapredicateMask(Definition def, arg_info *args);
 COMMON(int)		isTransparentMetamask(Definition def, arg_info *args);
@@ -445,7 +448,9 @@ COMMON(ClauseRef)	assertDefinition(Definition def, Clause clause,
 COMMON(ClauseRef)	assertProcedure(Procedure proc, Clause clause,
 					ClauseRef where ARG_LD);
 COMMON(bool)		abolishProcedure(Procedure proc, Module module);
-COMMON(bool)		retractClauseDefinition(Definition def, Clause clause);
+COMMON(int)		retract_clause(Clause clause, gen_t gen ARG_LD);
+COMMON(bool)		retractClauseDefinition(Definition def, Clause clause,
+						int notify);
 COMMON(void)		unallocClause(Clause c);
 COMMON(void)		freeClause(Clause c);
 COMMON(void)		lingerClauseRef(ClauseRef c);
@@ -478,7 +483,9 @@ COMMON(int)		setAttrDefinition(Definition def, unsigned attr, int val);
 COMMON(int)		PL_meta_predicate(predicate_t def, const char*);
 COMMON(void)		ddi_add_access_gen(DirtyDefInfo ddi, gen_t access);
 COMMON(int)		ddi_contains_gen(DirtyDefInfo ddi, gen_t access);
-COMMON(int)		ddi_is_garbage(DirtyDefInfo ddi, gen_t start, Clause cl);
+COMMON(int)		ddi_is_garbage(DirtyDefInfo ddi,
+				       gen_t start, Buffer tr_starts,
+				       Clause cl);
 COMMON(size_t)		sizeof_predicate(Definition def);
 
 /* pl-srcfile.c */
@@ -487,6 +494,7 @@ COMMON(int)		startConsult(SourceFile f);
 COMMON(int)		endConsult(SourceFile f);
 COMMON(size_t)		highSourceFileIndex(void);
 COMMON(SourceFile)	lookupSourceFile(atom_t name, int create);
+COMMON(int)		releaseSourceFileNo(int index);
 COMMON(SourceFile)	indexToSourceFile(int index);
 COMMON(void)		cleanupSourceFiles(void);
 COMMON(void)		unlinkSourceFileModule(SourceFile sf, Module m);
@@ -502,6 +510,18 @@ COMMON(int)		setMetapredicateSource(SourceFile sf, Procedure proc,
 COMMON(int)		exportProcedureSource(SourceFile sf, Module module,
 					      Procedure proc);
 COMMON(void)		registerReloadModule(SourceFile sf, Module module);
+
+#ifdef O_DEBUG
+COMMON(void)		acquireSourceFile_d(SourceFile f,
+					    const char *file, unsigned int line);
+COMMON(int)		releaseSourceFile_d(SourceFile f,
+					    const char *file, unsigned int line);
+#define acquireSourceFile(f) acquireSourceFile_d(f, __FILE__, __LINE__)
+#define releaseSourceFile(f) releaseSourceFile_d(f, __FILE__, __LINE__)
+#else
+COMMON(void)		acquireSourceFile(SourceFile sf);
+COMMON(int)		releaseSourceFile(SourceFile f);
+#endif
 
 /* pl-read.c */
 COMMON(void)		resetRead(void);
@@ -695,7 +715,6 @@ COMMON(access_level_t)	setAccessLevel(access_level_t new_level);
 
 
 /* pl-thread.c */
-COMMON(foreign_t)	pl_with_mutex(term_t mutex, term_t goal);
 COMMON(foreign_t)	pl_thread_self(term_t self);
 #ifdef O_PLMT
 COMMON(int)		unify_thread_id(term_t id, PL_thread_info_t *info);
@@ -705,7 +724,8 @@ COMMON(int)		enableThreads(int enable);
 
 /* pl-mutex.c */
 COMMON(void)		initMutexes(void);
-
+COMMON(foreign_t)	pl_with_mutex(term_t mutex, term_t goal);
+COMMON(int)		get_mutex(term_t t, pl_mutex **mutex, int create);
 
 /* pl-gmp.c */
 COMMON(int)	PL_unify_number__LD(term_t t, Number n ARG_LD);

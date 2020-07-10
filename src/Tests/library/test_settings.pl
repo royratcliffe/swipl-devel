@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2008-2011, University of Amsterdam
+    Copyright (c)  2008-2020, University of Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -35,11 +36,10 @@
 :- module(test_settings,
 	  [ test_settings/0
 	  ]).
-
-
 :- use_module(library(plunit)).
 :- use_module(library(settings)).
 :- use_module(library(readutil)).
+:- use_module(library(debug)).
 
 test_settings :-
 	run_tests([ settings
@@ -69,11 +69,13 @@ test(ch_default, [X == hello_world, cleanup(reset)]) :-
 	set_setting_default(test, hello_world),
 	setting(test, X).
 test(save_default, [ [X,Terms] == [hello_world,[]],
+		     setup(tmp_file(settings, DB)),
 		     cleanup((reset, delete_file(DB)))
 		   ]) :-
-	tmp_file(settings, DB),
+	setup_call_cleanup(open(DB, write, Out), true, close(Out)),
 	set_setting_default(test, hello_world),
 	save_settings(DB),
+	assertion(exists_file(DB)),
 	read_file_to_terms(DB, Terms, []),
 	load_settings(DB),
 	setting(test, X).
